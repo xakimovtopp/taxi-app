@@ -384,7 +384,7 @@ async function placeOrder() {
         const data = await res.json();
         if(data.success && data.order) {
             currentOrderId = data.order.id;
-            socket.emit('join_chat', currentOrderId);
+            socket.emit('join_chat', currentOrderId); // Xonaga ulanish
         } else {
             cancelSearch(); alert("Xatolik!");
         }
@@ -434,6 +434,23 @@ socket.on('driver_found', function(data) {
     if (data.driverLat != null && data.driverLng != null && userMarker) {
         const userPos = userMarker.getLatLng();
         drawDriverToClientRoute(data.driverLat, data.driverLng, userPos.lat, userPos.lng);
+    }
+});
+
+// [YANGI] Global status o'zgarishini tinglash (Ehtiyot shart)
+socket.on('order_status_change_global', function(data) {
+    if (currentOrderId && String(data.orderId) === String(currentOrderId) && data.status === 'accepted') {
+        // Agar mijoz hali ham qidiruv ekranida bo'lsa, uni haydovchi topildi ekraniga o'tkazamiz
+        const driver = data.driverData || {};
+        // driver_found hodisasini qo'lda chaqiramiz
+        socket.emit('driver_found_manual', { // Bu shunchaki lokal funksiyani chaqirish uchun
+            driver: driver.firstname + " " + driver.lastname,
+            phone: driver.telefon,
+            car_model: driver.marka + " " + driver.model,
+            car_plate: driver.raqam,
+            car_color: driver.rang,
+            rating: driver.reyting
+        });
     }
 });
 
