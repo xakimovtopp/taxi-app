@@ -233,12 +233,21 @@ async function getAddressFromCoords(lat, lng) {
         let response = await fetch(`${API_BASE}/api/geocoding?lat=${lat}&lng=${lng}`);
         if (response.ok) {
             let data = await response.json();
-            if (data.error || !data.address) {
+            
+            if (data.error) {
                 inputFrom.value = "Noma'lum hudud";
                 return;
             }
-            const addr = data.address;
-            let fullAddress = addr.road || addr.street || addr.residential || data.display_name.split(',')[0]; 
+            
+            let fullAddress = "Noma'lum hudud";
+            if (data.address) {
+                const a = data.address;
+                // Ko'proq maydonlarni tekshiramiz
+                fullAddress = a.road || a.pedestrian || a.street || a.residential || a.village || a.town || a.city || a.county || (data.display_name ? data.display_name.split(',')[0] : "Belgilangan joy");
+            } else if (data.display_name) {
+                fullAddress = data.display_name.split(',')[0];
+            }
+            
             inputFrom.value = fullAddress;
         }
     } catch (e) { console.error(e); }
