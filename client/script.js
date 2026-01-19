@@ -231,15 +231,16 @@ async function getAddressFromCoords(lat, lng) {
     const inputFrom = document.getElementById('input-from');
     try {
         let response = await fetch(`${API_BASE}/api/geocoding?lat=${lat}&lng=${lng}`);
-        let data = await response.json();
-        
-        if (data.error || !data.address) {
-            inputFrom.value = "Noma'lum hudud";
-            return;
+        if (response.ok) {
+            let data = await response.json();
+            if (data.error || !data.address) {
+                inputFrom.value = "Noma'lum hudud";
+                return;
+            }
+            const addr = data.address;
+            let fullAddress = addr.road || addr.street || addr.residential || data.display_name.split(',')[0]; 
+            inputFrom.value = fullAddress;
         }
-        const addr = data.address;
-        let fullAddress = addr.road || addr.street || addr.residential || data.display_name.split(',')[0]; 
-        inputFrom.value = fullAddress;
     } catch (e) { console.error(e); }
 }
 
@@ -268,7 +269,8 @@ var allAddresses = [];
 async function loadSavedAddresses() {
     try {
         const res = await fetch(`${API_BASE}/api/addresses`);
-        allAddresses = await res.json();
+        if (res.ok) allAddresses = await res.json();
+        else console.warn("Manzillarni yuklashda server xatosi:", res.status);
     } catch (err) { console.error(err); }
 }
 
@@ -542,7 +544,7 @@ socket.on('order_cancelled_success', function() {
 async function loadSystemData() {
     try {
         const res = await fetch(`${API_BASE}/api/services`);
-        globalServices = await res.json();
+        if (res.ok) globalServices = await res.json();
     } catch (e) { console.error(e); }
 }
 
@@ -557,16 +559,18 @@ function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
 async function checkRegion(lat, lng) {
     try {
         const res = await fetch(`${API_BASE}/api/regions`);
-        const regions = await res.json();
-        let foundRegion = null;
-        for (let reg of regions) {
-            if (getDistanceFromLatLonInKm(lat, lng, reg.lat, reg.lng) <= reg.radius) { foundRegion = reg; break; }
-        }
-        if (foundRegion && (!activeRegion || activeRegion.id !== foundRegion.id)) {
-            activeRegion = foundRegion;
-            loadTariffsForRegion(foundRegion.id);
-        } else if (!foundRegion) {
-            document.getElementById('tariff-list').innerHTML = '<div style="padding:15px; color:red">Xizmat doirasidan tashqarida</div>';
+        if (res.ok) {
+            const regions = await res.json();
+            let foundRegion = null;
+            for (let reg of regions) {
+                if (getDistanceFromLatLonInKm(lat, lng, reg.lat, reg.lng) <= reg.radius) { foundRegion = reg; break; }
+            }
+            if (foundRegion && (!activeRegion || activeRegion.id !== foundRegion.id)) {
+                activeRegion = foundRegion;
+                loadTariffsForRegion(foundRegion.id);
+            } else if (!foundRegion) {
+                document.getElementById('tariff-list').innerHTML = '<div style="padding:15px; color:red">Xizmat doirasidan tashqarida</div>';
+            }
         }
     } catch (e) { console.error(e); }
 }
@@ -765,10 +769,12 @@ async function drawTripRoute(lat1, lng1, lat2, lng2, stops) {
 async function loadSettings() {
     try {
         const res = await fetch(`${API_BASE}/api/settings`);
-        const data = await res.json();
-        surgeActive = data.surge_active;
-        surgeMultiplier = data.surge_multiplier;
-        calculatePrice(); 
+        if (res.ok) {
+            const data = await res.json();
+            surgeActive = data.surge_active;
+            surgeMultiplier = data.surge_multiplier;
+            calculatePrice(); 
+        }
     } catch(e) { console.log(e); }
 }
 
