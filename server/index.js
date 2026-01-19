@@ -29,8 +29,10 @@ app.use(express.static(path.join(__dirname, '../client')));
 // --- ☁️ MONGODB ULANISH ---
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://xakimov:Azizbek8889@cluster0.66sckhd.mongodb.net/taxi-pro?retryWrites=true&w=majority&appName=Cluster0";
 
+let isDbConnected = false; // [YANGI] Baza ulanish holati
+
 mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ MONGODB BAZASIGA ULANDI!"))
+    .then(() => { console.log("✅ MONGODB BAZASIGA ULANDI!"); isDbConnected = true; })
     .catch(err => console.error("❌ Baza xatosi:", err));
 
 // ==========================================
@@ -472,6 +474,8 @@ io.on('connection', (socket) => {
 
 // [YANGI] AVTO-SURGE TEKSHIRUVCHI (Har 5 soniyada)
 setInterval(async () => {
+    if (!isDbConnected) return; // [TUZATISH] Baza ulanmagan bo'lsa kutamiz
+
     try {
         const settings = await Settings.findOne({ id: 'global' });
         if (settings && settings.auto_surge) {
@@ -1155,6 +1159,8 @@ async function createBackup() {
 
 // Avtomatik Backup (Har 1 soatda)
 setInterval(async () => {
+    if (!isDbConnected) return; // [TUZATISH]
+
     try { await createBackup(); } catch(e) { console.error("Auto Backup Error:", e); }
 }, 60 * 60 * 1000);
 
