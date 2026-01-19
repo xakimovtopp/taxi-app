@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Driver Pro 3D</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#FFD600">
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">
+    
+    <script src='https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js'></script>
+    <link href='https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css' rel='stylesheet' />
+
+    <style>
+        /* --- ASOSIY STIL --- */
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Roboto', sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { background: #f0f0f0; height: 100vh; width: 100vw; overflow: hidden; position: relative; color: #333; }
+
+        /* XARITA */
+        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; background: #e0e0e0; }
+
+        /* UI ELEMENTLARI */
+        .ui-element { position: absolute; z-index: 10; pointer-events: auto; }
+
+        /* Power Tugmasi */
+        .top-left-btn {
+            top: 40px; left: 20px;
+            width: 50px; height: 50px; border-radius: 15px;
+            background: white; border: 1px solid #eee;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px; color: #e74c3c; cursor: pointer;
+        }
+
+        /* Balans */
+        .top-right-card {
+            top: 40px; right: 20px;
+            background: white; border: 1px solid #eee;
+            padding: 8px 12px; border-radius: 18px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            display: flex; align-items: center; gap: 12px;
+        }
+        .bal-sum { font-size: 18px; font-weight: 900; color: #333; display: block; }
+        .bal-orders { font-size: 12px; color: #888; font-weight: 500; text-align: right; display: block;}
+        .profile-pic {
+            width: 40px; height: 40px; background: #e0e7ff; color: #4f46e5;
+            border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer;
+        }
+
+        /* O'ng tugmalar */
+        .right-buttons { position: absolute; top: 120px; right: 20px; display: flex; flex-direction: column; gap: 15px; z-index: 10; }
+        .icon-btn {
+            width: 50px; height: 50px; border-radius: 15px;
+            background: white; border: 1px solid #eee;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px; color: #555; cursor: pointer; position: relative;
+        }
+        .badge-count {
+            position: absolute; top: -5px; right: -5px;
+            background: #e74c3c; color: white; border-radius: 50%;
+            width: 20px; height: 20px; font-size: 12px; font-weight: bold;
+            display: none; align-items: center; justify-content: center; border: 2px solid white;
+        }
+
+        /* --- PANELLAR --- */
+        .bottom-panel {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            background: white; border-radius: 25px 25px 0 0; 
+            padding: 20px; z-index: 20;
+            box-shadow: 0 -5px 40px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease-out;
+        }
+        .hidden-panel { transform: translateY(110%); }
+        .drag-handle { width: 40px; height: 5px; background: #e0e0e0; margin: 0 auto 15px; border-radius: 3px; }
+
+        /* Offline Slider */
+        #panel-offline { bottom: 30px; left: 20px; right: 20px; width: auto; background: transparent; box-shadow: none; padding: 0; z-index: 15; }
+        .offline-slider-bg {
+            height: 70px; background: rgba(255, 255, 255, 0.95); border-radius: 35px;
+            backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            position: relative; overflow: hidden; display: flex; align-items: center; padding: 5px; border: 1px solid #eee;
+        }
+        .offline-text { position: absolute; width: 100%; text-align: center; font-size: 18px; font-weight: 700; color: #aaa; letter-spacing: 1px; pointer-events: none; }
+        .offline-knob { width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #6366f1, #4f46e5); position: absolute; left: 5px; top: 5px; z-index: 2; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px; cursor: grab; box-shadow: 0 4px 10px rgba(99, 102, 241, 0.4); }
+
+        /* Request */
+        .req-card { text-align: center; }
+        .req-dist-badge { background: #333; color: white; padding: 5px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; display: inline-block; margin-bottom: 10px; }
+        .req-address { font-size: 22px; font-weight: 800; margin-bottom: 5px; line-height: 1.2; color: #222; }
+        
+        /* DIQQAT: Narxni yashirish */
+        .req-price { 
+            font-size: 32px; font-weight: 900; color: #f1c40f; margin: 10px 0; 
+            display: none; /* Mijoz taklifingiz bo'yicha yashirildi */
+        }
+        
+        .req-btn { width: 100%; padding: 18px; border-radius: 16px; font-size: 18px; font-weight: 700; border: none; cursor: pointer; color: white; background: linear-gradient(135deg, #2ecc71, #27ae60); }
+
+        /* Active Order */
+        .active-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
+        .tariff-row { display: flex; align-items: center; font-weight: 700; font-size: 16px; color: #3498db; gap: 5px; }
+        .timer-val { font-size: 20px; font-weight: 700; color: #e74c3c; background: #fff5f5; padding: 2px 8px; border-radius: 8px; }
+        .location-info { margin-bottom: 20px; padding: 12px; background: #f8f9fa; border-radius: 12px; display: flex; align-items: center; gap: 10px; }
+        .loc-text { font-size: 16px; font-weight: 600; color: #333; }
+        .action-buttons { display: flex; justify-content: space-between; padding: 0 10px; margin-bottom: 25px; }
+        .circle-act { display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; }
+        .circle-bg { width: 60px; height: 60px; border-radius: 50%; background: #f1f2f6; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #555; }
+        .act-cancel .circle-bg { color: #e74c3c; background: #fff5f5; }
+
+        /* Slider */
+        .slider-container { position: relative; width: 100%; height: 65px; background: #e0e0e0; border-radius: 35px; overflow: hidden; display: flex; align-items: center; padding: 5px; box-shadow: inset 0 2px 6px rgba(0,0,0,0.1); }
+        .slider-text { position: absolute; width: 100%; text-align: center; font-weight: 700; font-size: 18px; color: #777; text-transform: uppercase; pointer-events: none; z-index: 1; }
+        .slider-thumb { width: 55px; height: 55px; border-radius: 50%; background: white; position: absolute; left: 5px; top: 5px; z-index: 2; display: flex; align-items: center; justify-content: center; color: #333; font-size: 24px; cursor: grab; }
+        .state-yellow .slider-thumb { background: #FFD600; color: #000; }
+        .state-blue .slider-thumb { background: #4a90e2; color: #fff; }
+        .state-red .slider-thumb { background: #e74c3c; color: #fff; }
+
+        /* Login */
+        #login-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; z-index: 3000; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; }
+        
+        /* Marker */
+        .driver-marker { width: 60px; height: 60px; display: block; filter: drop-shadow(0 10px 10px rgba(0,0,0,0.2)); transition: transform 0.2s; }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen">
+        <i class="fas fa-taxi" style="font-size: 60px; color: #FFD600; margin-bottom: 20px;"></i>
+        <h2>Driver Pro</h2>
+        <input type="tel" id="login-phone" style="width:100%; padding:15px; background:#f3f4f6; border:none; border-radius:12px; margin:20px 0; font-size:18px; text-align:center;" placeholder="+998 90 123 45 67">
+        <button onclick="loginDriver()" style="width:100%; padding:15px; background:#000; color:white; border:none; border-radius:12px; font-size:18px; font-weight:700;">KIRISH</button>
+    </div>
+
+    <div id="main-interface" style="display: none;">
+        <div id="map"></div>
+
+        <div class="top-left-btn ui-element" onclick="toggleOfflineMode()"><i class="fas fa-power-off"></i></div>
+
+        <div class="top-right-card ui-element">
+            <div class="balance-info"><span class="bal-sum">0</span><span class="bal-orders">UZS</span></div>
+            <div class="profile-pic" id="btn-profile-dashboard"><i class="fas fa-user"></i></div>
+        </div>
+
+        <div class="right-buttons ui-element">
+            <div class="icon-btn" onclick="openHistory()">
+                <i class="fas fa-list"></i>
+                <div class="badge-count" id="orders-count">0</div>
+            </div>
+            <div class="icon-btn" onclick="openSettings()">
+                <i class="fas fa-cog"></i>
+            </div>
+            <div class="icon-btn" onclick="resetCamera()">
+                <i class="fas fa-compass"></i>
+            </div>
+        </div>
+
+        <div id="panel-offline" class="bottom-panel">
+            <div class="offline-slider-bg" id="offline-slider">
+                <div class="offline-text">LINIYAGA CHIQISH >>></div>
+                <div class="offline-knob" id="offline-knob"><i class="fas fa-chevron-right"></i></div>
+            </div>
+        </div>
+
+        <div id="panel-request" class="bottom-panel hidden-panel req-card">
+            <div class="req-dist-badge" id="req-info">Yangi Buyurtma</div>
+            <div class="req-address" id="req-address">...</div>
+            <div class="req-price" id="req-price">...</div> <div style="display:flex; gap:10px; margin-top:20px;">
+                <button onclick="skipOrder()" style="flex:1; padding:18px; border-radius:16px; border:none; background:#f1f2f6; font-weight:700; color:#555;">O'tkazish</button>
+                <button onclick="acceptPendingOrder()" class="req-btn" style="flex:2;">QABUL QILISH</button>
+            </div>
+        </div>
+
+        <div id="panel-active" class="bottom-panel hidden-panel">
+            <div class="drag-handle"></div>
+            <div class="active-header">
+                <div><div class="tariff-row"><i class="fas fa-car-side"></i> Ekonom</div><div style="font-size:14px; color:#27ae60; font-weight:600; margin-top:4px">Naqd pul</div></div>
+                <div class="timer-val" id="trip-timer">00:00</div>
+            </div>
+            <div class="location-info"><i class="fas fa-map-marker-alt" style="color:#e74c3c"></i><div class="loc-text" id="act-address">...</div></div>
+            <div class="action-buttons">
+                <div class="circle-act act-cancel" onclick="cancelActiveOrder()"><div class="circle-bg"><i class="fas fa-times"></i></div><span>Bekor</span></div>
+                <div class="circle-act" onclick="alert('Tel...')"><div class="circle-bg"><i class="fas fa-phone-alt"></i></div><span>Tel</span></div>
+                <div class="circle-act" onclick="alert('Chat')"><div class="circle-bg"><i class="fas fa-comment-dots"></i></div><span>Chat</span></div>
+            </div>
+            <div class="slider-container state-yellow" id="main-slider">
+                <div class="slider-text" id="slider-text">YETIB KELDIM >>></div>
+                <div class="slider-thumb" id="slider-thumb"><i class="fas fa-chevron-right"></i></div>
+            </div>
+        </div>
+
+        <div id="modal-history" class="bottom-panel hidden-panel" style="height: 80%; border-radius: 20px 20px 0 0; z-index: 2000;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <h2 style="font-size:20px;">📋 Buyurtmalar Tarixi</h2>
+                <i class="fas fa-times" onclick="closeModal('modal-history')" style="font-size:24px; padding:10px; cursor:pointer;"></i>
+            </div>
+            <div id="history-list" style="overflow-y:auto; height:90%; padding-bottom:20px;">
+                </div>
+        </div>
+
+        <div id="modal-settings" class="bottom-panel hidden-panel" style="height: 50%; z-index: 2000;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 style="font-size:20px;">⚙️ Sozlamalar</h2>
+                <i class="fas fa-times" onclick="closeModal('modal-settings')" style="font-size:24px; padding:10px; cursor:pointer;"></i>
+            </div>
+            <div style="background:#f8f9fa; padding:15px; border-radius:12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-weight:600"><i class="fas fa-moon"></i> Tungi Rejim</span>
+                <input type="checkbox" id="toggle-night" onchange="toggleNightMode()" style="transform: scale(1.5);">
+            </div>
+            <div style="background:#f8f9fa; padding:15px; border-radius:12px; display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-weight:600"><i class="fas fa-map"></i> Navigator</span>
+                <select style="border:none; background:transparent; font-weight:bold; font-size:16px;">
+                    <option>Yandex Maps</option>
+                    <option>Google Maps</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <audio id="sound-new" src="https://www.soundjay.com/buttons/beep-01a.mp3"></audio>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let map;
+        let driverMarkerEl;
+        let currentOrder = null;
+        let activeOrderId = null;
+        let tripStatus = 'yetib_keldi';
+        let isOnline = false;
+        let stopMarkers = []; // [YANGI] Stop markerlar uchun
+
+        // --- 1. LOGIN ---
+        async function loginDriver() {
+            const phone = getDriverPhone();
+            try {
+                const res = await fetch('/api/driver/login', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ phone })
+                });
+                const data = await res.json();
+                
+                if(data.success) {
+                    document.getElementById('login-screen').style.display = 'none';
+                    document.getElementById('main-interface').style.display = 'block';
+                    init3DMap();
+                    initSlider('offline-slider', 'offline-knob', goOnline);
+                    loadProfile();
+                    
+                    // [YANGI] Aktiv zakazni tiklash (Refresh bo'lsa ham ishlaydi)
+                    if(data.activeOrder) {
+                        restoreActiveOrder(data.activeOrder);
+                    }
+                } else {
+                    alert("Bunday haydovchi topilmadi!");
+                }
+            } catch(e) { 
+                console.error(e);
+                alert("Server bilan aloqa yo'q");
+            }
+        }
+
+        // [YANGI] Aktiv buyurtmani qayta tiklash funksiyasi
+        function restoreActiveOrder(order) {
+            currentOrder = order;
+            activeOrderId = order.id;
+            
+            // UI ni tiklash
+            document.getElementById('panel-request').classList.add('hidden-panel');
+            document.getElementById('panel-active').classList.remove('hidden-panel');
+            document.getElementById('act-address').innerText = (order.status === 'started') ? ("Manzil: " + order.qayerga) : ("Mijoz: " + order.qayerdan);
+            
+            // Statusga qarab sliderni to'g'irlash
+            if(order.status === 'accepted') {
+                tripStatus = 'yetib_keldi';
+                resetActiveSlider("YETIB KELDIM", "state-yellow", nextStatus);
+            } else if(order.status === 'arrived') {
+                tripStatus = 'boshlash';
+                resetActiveSlider("BOSHLASH", "state-blue", nextStatus);
+            } else if(order.status === 'started') {
+                tripStatus = 'yakunlash';
+                resetActiveSlider("YAKUNLASH", "state-red", nextStatus);
+            }
+            
+            // Socketni ulash (muhim!)
+            goOnline(); 
+        }
+
+        // Telefoni olish
+        function getDriverPhone() {
+            let val = document.getElementById('login-phone').value.replace(/\D/g, '');
+            if(!val) val = "901234567"; 
+            return "+998" + (val.startsWith('998') ? val.substring(3) : val);
+        }
+
+        async function loadProfile() {
+            try {
+                const res = await fetch(`/api/driver/profile?phone=${encodeURIComponent(getDriverPhone())}`);
+                const driver = await res.json();
+                if(driver && !driver.error) {
+                    document.querySelector('.bal-sum').innerText = (driver.balans || 0).toLocaleString();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        // --- 2. XARITA ---
+        function init3DMap() {
+            const styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+            map = new maplibregl.Map({
+                container: 'map',
+                style: styleUrl,
+                center: [65.7900, 38.8410],
+                zoom: 17,
+                pitch: 60,
+                bearing: -20,
+                antialias: true
+            });
+
+            map.on('styleimagemissing', (e) => {
+                const image = new Image(1, 1);
+                image.onload = () => { if (!map.hasImage(e.id)) map.addImage(e.id, image); };
+                image.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFhAJ/wlseKgAAAABJRU5ErkJggg==';
+            });
+
+            map.on('load', () => {
+                const sourceId = map.getSource('openmaptiles') ? 'openmaptiles' : 'openfreemap';
+                if (!map.getLayer('3d-buildings') && map.getSource(sourceId)) {
+                    map.addLayer({
+                        'id': '3d-buildings',
+                        'source': sourceId,
+                        'source-layer': 'building',
+                        'filter': ['==', 'extrude', 'true'],
+                        'type': 'fill-extrusion',
+                        'minzoom': 15,
+                        'paint': {
+                            'fill-extrusion-color': '#e0e0e0',
+                            'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'height']],
+                            'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'min_height']],
+                            'fill-extrusion-opacity': 0.9
+                        }
+                    });
+                }
+
+                const el = document.createElement('div');
+                el.innerHTML = `
+                    <svg width="60" height="60" viewBox="0 0 100 100" style="filter: drop-shadow(0 5px 5px rgba(0,0,0,0.3));">
+                        <path d="M50 5 L10 85 L50 65 Z" fill="#F4D03F" stroke="white" stroke-width="2"/>
+                        <path d="M50 5 L90 85 L50 65 Z" fill="#D4AC0D" stroke="white" stroke-width="2"/>
+                    </svg>`;
+                el.className = 'driver-marker';
+                driverMarkerEl = new maplibregl.Marker({ element: el })
+                    .setLngLat([65.7900, 38.8410])
+                    .addTo(map);
+            });
+
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(pos => {
+                    const { latitude, longitude, heading } = pos.coords;
+                    const coords = [longitude, latitude];
+                    if(driverMarkerEl) driverMarkerEl.setLngLat(coords);
+                    map.easeTo({ center: coords, bearing: heading || 0, zoom: 17, pitch: 60 });
+                    
+                    // Serverga joylashuv yuborish
+                    if(isOnline) socket.emit('driver_location', { id: getDriverPhone(), lat: latitude, lng: longitude });
+
+                }, err => console.log(err), { enableHighAccuracy: true });
+            }
+        }
+
+        // --- 3. ONLINE / OFFLINE ---
+        function goOnline() { 
+            isOnline = true; 
+            document.getElementById('panel-offline').classList.add('hidden-panel'); 
+            socket.emit('driver_online', { phone: getDriverPhone() });
+            alert("Siz liniyadasiz! Buyurtma kuting...");
+        }
+
+        function toggleOfflineMode() { 
+            if(currentOrder) { alert("Avval aktiv zakazni tugating!"); return; }
+            isOnline = false; 
+            document.getElementById('panel-offline').classList.remove('hidden-panel'); 
+            socket.emit('driver_offline', { phone: getDriverPhone() });
+        }
+
+        function resetCamera() { map.easeTo({ pitch: 60, bearing: 0, zoom: 17 }); }
+
+        // --- 4. ZAKAZLAR LOGIKASI ---
+        socket.on('yangi_buyurtma', (order) => {
+            document.getElementById('sound-new').play();
+            if(isOnline && !currentOrder) {
+                currentOrder = order;
+                document.getElementById('req-address').innerText = order.qayerdan;
+                document.getElementById('req-info').innerText = "Yangi Buyurtma";
+                document.getElementById('panel-request').classList.remove('hidden-panel');
+                drawRoute([65.7900, 38.8410], [order.fromLng, order.fromLat]);
+            }
+        });
+
+        function acceptPendingOrder() {
+            document.getElementById('panel-request').classList.add('hidden-panel');
+            document.getElementById('panel-active').classList.remove('hidden-panel');
+            document.getElementById('act-address').innerText = "Mijoz: " + currentOrder.qayerdan;
+            resetActiveSlider("YETIB KELDIM", "state-yellow", nextStatus);
+
+            // MUHIM: Serverga "Oldim" deb aytish
+            if (currentOrder && currentOrder.id) {
+                activeOrderId = currentOrder.id; 
+                // [YANGI] Chatga qo'shilish
+                socket.emit('join_chat', activeOrderId);
+
+                socket.emit('driver_accept_order', { 
+                    orderId: currentOrder.id,
+                    phone: getDriverPhone(),
+                    driverName: "Haydovchi"
+                });
+            }
+        }
+
+        function nextStatus() {
+            if(!activeOrderId) return;
+
+            if(tripStatus === 'yetib_keldi') {
+                socket.emit('driver_update_status', { orderId: activeOrderId, status: 'arrived' });
+                tripStatus = 'boshlash';
+                resetActiveSlider("BOSHLASH", "state-blue", nextStatus);
+            } else if(tripStatus === 'boshlash') {
+                socket.emit('driver_update_status', { orderId: activeOrderId, status: 'started' });
+                tripStatus = 'yakunlash';
+                document.getElementById('act-address').innerText = "Manzil: " + currentOrder.qayerga;
+                resetActiveSlider("YAKUNLASH", "state-red", nextStatus);
+            } else if(tripStatus === 'yakunlash') {
+                finishTrip();
+            }
+        }
+
+        function finishTrip() {
+            // Narxni ko'rsatish
+            let finalPrice = currentOrder.narx || "15 000 so'm";
+            alert("Sayohat tugadi!\nTo'lov summasi: " + finalPrice);
+            
+            // Serverga tugatish signali
+            socket.emit('driver_update_status', { orderId: activeOrderId, status: 'finished' });
+
+            // Tozalash
+            document.getElementById('panel-active').classList.add('hidden-panel');
+            currentOrder = null;
+            activeOrderId = null;
+            tripStatus = 'yetib_keldi';
+            
+            if (map.getLayer('route')) map.removeLayer('route');
+            if (map.getSource('route')) map.removeSource('route');
+            
+            // Qayta onlayn
+            goOnline();
+            loadProfile(); // Balansni yangilash
+        }
+
+        function skipOrder() { document.getElementById('panel-request').classList.add('hidden-panel'); currentOrder = null; }
+        
+        function cancelActiveOrder() { 
+            if(confirm("Haqiqatan ham bekor qilasizmi?")) {
+                // Serverga bekor qilish signali (cancelled)
+                socket.emit('driver_update_status', { orderId: activeOrderId, status: 'cancelled' });
+                
+                alert("Buyurtma bekor qilindi!");
+
+                // Tozalash
+                document.getElementById('panel-active').classList.add('hidden-panel');
+                currentOrder = null;
+                activeOrderId = null;
+                tripStatus = 'yetib_keldi';
+                
+                if (map.getLayer('route')) map.removeLayer('route');
+                if (map.getSource('route')) map.removeSource('route');
+                
+                // Qayta onlayn
+                goOnline();
+                loadProfile();
+            } 
+        }
+
+        // --- DASHBOARD (KABINET) ---
+        async function openDashboard() {
+            document.getElementById('main-interface').style.display = 'none';
+            let dashboard = document.getElementById('dashboard-screen');
+            if (!dashboard) {
+                dashboard = document.createElement('div');
+                dashboard.id = 'dashboard-screen';
+                dashboard.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; background:#f5f5f5; z-index:5000; overflow-y:auto; font-family: 'Roboto', sans-serif;";
+                document.body.appendChild(dashboard);
+            }
+            dashboard.style.display = 'block';
+            
+            // Ma'lumotlarni yuklash
+            const phone = getDriverPhone();
+            try {
+                const [resProfile, resOrders] = await Promise.all([
+                    fetch(`/api/driver/profile?phone=${encodeURIComponent(phone)}`),
+                    fetch(`/api/driver/orders-history?phone=${encodeURIComponent(phone)}`)
+                ]);
+                const driver = await resProfile.json();
+                const orders = await resOrders.json();
+                
+                renderDashboardContent(driver, orders);
+            } catch(e) { console.error(e); }
+        }
+
+        function closeDashboard() {
+            document.getElementById('dashboard-screen').style.display = 'none';
+            document.getElementById('main-interface').style.display = 'block';
+        }
+
+        function renderDashboardContent(driver, orders) {
+            const dashboard = document.getElementById('dashboard-screen');
+            const fmt = (n) => (n || 0).toLocaleString();
+            
+            // [YANGI] Salomlashish
+            const hour = new Date().getHours();
+            let greeting = "Salom";
+            if(hour >= 5 && hour < 11) greeting = "Xayrli tong";
+            else if(hour >= 11 && hour < 18) greeting = "Xayrli kun";
+            else greeting = "Xayrli kech";
+
+            // [YANGI] Yutuqlar (Gamifikatsiya)
+            const totalOrders = driver.stats?.total || 0;
+            const achievements = [
+                { icon: '🚀', title: 'Start', desc: '1-buyurtma', active: totalOrders > 0 },
+                { icon: '⚡', title: 'Faol', desc: '10+ buyurtma', active: totalOrders >= 10 },
+                { icon: '💎', title: 'Pro', desc: '100+ buyurtma', active: totalOrders >= 100 },
+                { icon: '⭐️', title: 'Yulduz', desc: '5.0 Reyting', active: (driver.reyting || 0) >= 5.0 }
+            ];
+
+            // [TAKLIF] Kunlik Maqsad (Masalan: 500,000 so'm)
+            const dailyTarget = 500000;
+            const dailyIncome = driver.stats?.daily || 0;
+            const progress = Math.min(100, (dailyIncome / dailyTarget) * 100);
+
+            // Balans tarixini shakllantirish
+            let balanceHistoryHtml = '';
+            if (driver.balance_history && driver.balance_history.length > 0) {
+                balanceHistoryHtml = driver.balance_history.slice().reverse().slice(0, 5).map(h => `
+                    <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid #eee;">
+                        <div>
+                            <div style="font-weight:600; font-size:14px;">${h.comment || 'Balans to\'ldirish'}</div>
+                            <div style="font-size:11px; color:#888;">${new Date(h.date).toLocaleString()}</div>
+                        </div>
+                        <div style="font-weight:bold; color:${h.amount > 0 ? '#27ae60' : '#e74c3c'}">${h.amount > 0 ? '+' : ''}${fmt(h.amount)}</div>
+                    </div>
+                `).join('');
+            } else {
+                balanceHistoryHtml = '<div style="text-align:center; color:#999; font-size:13px; padding:10px;">Tarix bo\'sh</div>';
+            }
+            
+            dashboard.innerHTML = `
+                <div style="background:white; padding:20px; position:sticky; top:0; z-index:10; box-shadow:0 2px 10px rgba(0,0,0,0.05); display:flex; align-items:center;">
+                    <div onclick="closeDashboard()" style="font-size:24px; padding-right:20px; cursor:pointer;"><i class="fas fa-arrow-left"></i></div>
+                    <h2 style="margin:0; font-size:20px;">Kabinet</h2>
+                </div>
+                
+                <div style="padding:20px;">
+                    <!-- Profil -->
+                    <div style="background:white; border-radius:20px; padding:20px; text-align:center; margin-bottom:20px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
+                        <div style="font-size:14px; color:#4f46e5; font-weight:bold; margin-bottom:10px;">${greeting}, ${driver.firstname || 'Haydovchi'}!</div>
+                        <div style="width:80px; height:80px; background:#e0e7ff; color:#4f46e5; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:35px; margin:0 auto 15px;">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <h2 style="margin:0 0 5px 0;">${driver.lastname || ''} ${driver.firstname || ''}</h2>
+                        <p style="color:#888; margin:0 0 15px 0;">${driver.partner_name || 'Kompaniya'}</p>
+                        <div style="display:flex; justify-content:center; gap:10px;">
+                            <span style="background:#f3f4f6; padding:5px 10px; border-radius:8px; font-size:14px; font-weight:bold;">${driver.marka} ${driver.model}</span>
+                            <span style="background:#fffbeb; color:#b45309; padding:5px 10px; border-radius:8px; font-size:14px; font-weight:bold;">★ ${driver.reyting || 5.0}</span>
+                        </div>
+                    </div>
+
+                    <!-- [YANGI] Yutuqlar -->
+                    <h3 style="margin-bottom:15px;">Yutuqlar</h3>
+                    <div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:5px; margin-bottom:20px; scrollbar-width:none;">
+                        ${achievements.map(a => `
+                            <div style="min-width:100px; background:${a.active ? 'linear-gradient(135deg, #fffbeb, #fef3c7)' : '#f3f4f6'}; border:1px solid ${a.active ? '#fcd34d' : '#e5e7eb'}; border-radius:16px; padding:15px; text-align:center; opacity:${a.active ? 1 : 0.7}; box-shadow:${a.active ? '0 4px 10px rgba(251, 191, 36, 0.2)' : 'none'}">
+                                <div style="font-size:28px; margin-bottom:5px;">${a.icon}</div>
+                                <div style="font-size:13px; font-weight:bold; color:${a.active ? '#92400e' : '#6b7280'}">${a.title}</div>
+                                <div style="font-size:10px; color:${a.active ? '#b45309' : '#9ca3af'}">${a.desc}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <!-- [YANGI] Kunlik Maqsad (Taklif) -->
+                    <div style="background:white; border-radius:20px; padding:20px; margin-bottom:20px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                            <span style="font-weight:bold; font-size:14px;">Kunlik Maqsad</span>
+                            <span style="font-size:14px; color:#4f46e5; font-weight:bold;">${Math.round(progress)}%</span>
+                        </div>
+                        <div style="width:100%; height:10px; background:#f3f4f6; border-radius:5px; overflow:hidden;">
+                            <div style="width:${progress}%; height:100%; background:linear-gradient(90deg, #6366f1, #4f46e5); border-radius:5px;"></div>
+                        </div>
+                        <div style="text-align:right; font-size:11px; color:#888; margin-top:5px;">${fmt(dailyIncome)} / ${fmt(dailyTarget)}</div>
+                    </div>
+
+                    <!-- Statistika -->
+                    <h3 style="margin-bottom:15px;">Statistika</h3>
+                    <div style="display:flex; gap:10px; margin-bottom:25px;">
+                        <div style="flex:1; background:white; padding:15px; border-radius:15px; text-align:center; box-shadow:0 2px 10px rgba(0,0,0,0.03);">
+                            <div style="font-size:18px; font-weight:900;">${fmt(driver.stats?.daily)}</div>
+                            <div style="font-size:12px; color:#888;">Bugun</div>
+                        </div>
+                        <div style="flex:1; background:white; padding:15px; border-radius:15px; text-align:center; box-shadow:0 2px 10px rgba(0,0,0,0.03);">
+                            <div style="font-size:18px; font-weight:900;">${fmt(driver.stats?.weekly)}</div>
+                            <div style="font-size:12px; color:#888;">Hafta</div>
+                        </div>
+                        <div style="flex:1; background:white; padding:15px; border-radius:15px; text-align:center; box-shadow:0 2px 10px rgba(0,0,0,0.03);">
+                            <div style="font-size:18px; font-weight:900;">${fmt(driver.stats?.monthly)}</div>
+                            <div style="font-size:12px; color:#888;">Oy</div>
+                        </div>
+                    </div>
+
+                    <!-- [YANGI] Balans Tarixi -->
+                    <h3 style="margin-bottom:15px;">Balans Tarixi</h3>
+                    <div style="background:white; border-radius:20px; padding:15px; margin-bottom:25px; box-shadow:0 2px 10px rgba(0,0,0,0.03);">
+                        ${balanceHistoryHtml}
+                    </div>
+
+                    <!-- Tarix -->
+                    <h3 style="margin-bottom:15px;">Buyurtmalar Tarixi</h3>
+                    <div>
+                        ${orders.map(o => `
+                            <div style="background:white; padding:15px; border-radius:15px; margin-bottom:10px; box-shadow:0 2px 5px rgba(0,0,0,0.03);">
+                                <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                                    <span style="font-weight:bold; font-size:16px;">${o.narx}</span>
+                                    <span style="font-size:12px; font-weight:bold; color:${o.status==='finished'?'#27ae60':(o.status==='cancelled'?'#e74c3c':'#f39c12')}">${o.status==='finished'?'Yakunlandi':(o.status==='cancelled'?'Bekor':'Boshqa')}</span>
+                                </div>
+                                <div style="font-size:14px; color:#555; margin-bottom:3px;">A: ${o.qayerdan}</div>
+                                <div style="font-size:14px; color:#555;">B: ${o.qayerga}</div>
+                                <div style="text-align:right; font-size:11px; color:#aaa; margin-top:5px;">${new Date(o.id).toLocaleString()}</div>
+                            </div>
+                        `).join('')}
+                        ${orders.length === 0 ? '<div style="text-align:center; color:#999;">Buyurtmalar yo\'q</div>' : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- 5. TARIYAT VA SOZLAMALAR ---
+        async function openHistory() {
+            document.getElementById('modal-history').classList.remove('hidden-panel');
+            const list = document.getElementById('history-list');
+            list.innerHTML = '<div style="text-align:center; margin-top:20px;">Yuklanmoqda...</div>';
+
+            try {
+                const res = await fetch(`/api/driver/orders-history?phone=${encodeURIComponent(getDriverPhone())}`);
+                const orders = await res.json();
+
+                list.innerHTML = '';
+                if(orders.length === 0) {
+                    list.innerHTML = '<div style="text-align:center; margin-top:30px; color:#888;">Tarix bo\'sh</div>';
+                    return;
+                }
+
+                orders.forEach(o => {
+                    list.innerHTML += `
+                        <div style="background:white; padding:15px; border-radius:15px; margin-bottom:10px; border:1px solid #eee; box-shadow:0 2px 5px rgba(0,0,0,0.03);">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                                <span style="font-weight:800; font-size:18px;">${o.narx || '15 000'} so'm</span>
+                                <span style="color:#888; font-size:12px;">${o.vaqt || ''}</span>
+                            </div>
+                            <div style="font-size:14px; margin-bottom:5px;"><i class="fas fa-map-marker-alt" style="color:green"></i> ${o.qayerdan}</div>
+                            <div style="font-size:14px;"><i class="fas fa-flag-checkered" style="color:red"></i> ${o.qayerga}</div>
+                            <div style="margin-top:10px; text-align:right;">
+                                <span style="background:#e0f2f1; color:#00695c; padding:4px 8px; border-radius:6px; font-size:11px; font-weight:bold;">BAJARILDI</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch(e) { console.error(e); }
+        }
+
+        function openSettings() { document.getElementById('modal-settings').classList.remove('hidden-panel'); }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden-panel'); }
+
+        // --- YORDAMCHI (Slider & Marshrut) ---
+        function initSlider(id, knobId, cb) {
+            const kn = document.getElementById(knobId), ct = document.getElementById(id);
+            let drag = false, sx = 0;
+            const start = (e) => { drag = true; sx = (e.touches ? e.touches[0].clientX : e.clientX); };
+            const move = (e) => {
+                if(!drag) return;
+                let x = (e.touches ? e.touches[0].clientX : e.clientX) - sx;
+                let max = ct.offsetWidth - kn.offsetWidth - 10;
+                kn.style.transform = `translateX(${Math.max(0, Math.min(x, max))}px)`;
+                if(x >= max - 5) { drag = false; kn.style.transform = `translateX(0px)`; cb(); }
+            };
+            const end = () => { if(drag) { drag = false; kn.style.transform = `translateX(0px)`; } };
+            kn.onmousedown = start; window.onmousemove = move; window.onmouseup = end;
+            kn.ontouchstart = start; window.ontouchmove = move; window.ontouchend = end;
+        }
+
+        function resetActiveSlider(t, c, cb) {
+            document.getElementById('main-slider').className = `slider-container `;
+            document.getElementById('slider-text').innerText = t + " >>>";
+            initSlider('main-slider', 'slider-thumb', cb);
+        }
+
+        function drawRoute(start, end) {
+            fetch(`https://router.project-osrm.org/route/v1/driving/${start[0]},${start[1]};${end[0]},${end[1]}?overview=full&geometries=geojson`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.routes.length) return;
+                const route = data.routes[0].geometry;
+                if (map.getSource('route')) {
+                    map.getSource('route').setData(route);
+                } else {
+                    map.addSource('route', { type: 'geojson', data: route });
+                    map.addLayer({
+                        'id': 'route', 'type': 'line', 'source': 'route',
+                        'layout': { 'line-join': 'round', 'line-cap': 'round' },
+                        'paint': { 'line-color': '#4a90e2', 'line-width': 6, 'line-opacity': 0.8 }
+                    });
+                }
+            });
+        }
+
+        // Tugmani majburiy ulash (Cache muammosini oldini olish uchun)
+        document.addEventListener("DOMContentLoaded", () => {
+            const btn = document.getElementById('btn-profile-dashboard');
+            if(btn) {
+                btn.onclick = openDashboard;
+            }
+        });
+
+        // [YANGI] Ovozli signal funksiyasi (AudioContext)
+        function playNotificationSound() {
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContext) return;
+                const ctx = new AudioContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.5);
+                gain.gain.setValueAtTime(0.5, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.5);
+            } catch (e) { console.error("Audio error", e); }
+        }
+    </script>
+</body>
+</html>

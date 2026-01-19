@@ -1,0 +1,23 @@
+{
+  "name": "Taxi Pro",
+  "short_name": "Taxi Pro",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#FFD600",
+  "icons": [
+    {
+      "src": "img/logo_512.png",
+      "sizes": "512x512", 
+      "type": "image/png"
+    },
+    {
+      "src": "img/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "orientation": "portrait",
+  "scope": "/",
+  "description": "Professional Taksi Xizmati"
+}

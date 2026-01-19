@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <script src="/socket.io/socket.io.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Prime Go</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#FFD600">
+    <link rel="icon" href="img/logo.png" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Prompt:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="screen-login" class="screen active">
+        <div class="login-content">
+            <div class="logo-area"><img src="img/logo.png" class="login-logo" alt="Prime Go"></div>
+            <h1 data-i18n="login_title">Raqamingizni kiriting</h1>
+            <p class="subtitle" data-i18n="login_subtitle">Raqamga tasdiqlash kodi yuboriladi</p>
+            
+            <div class="phone-input-box">
+                <span class="prefix">+998</span>
+                <input type="tel" id="phone-number" placeholder="90 123 45 67" maxlength="9">
+            </div>
+
+            <div class="spacer"></div>
+            <button class="btn-yellow" onclick="goToHome()" data-i18n="login_btn">Kirish</button>
+        </div>
+    </div>
+
+    <div id="screen-home" class="screen">
+        <div class="top-header">
+            <div class="menu-circle" onclick="openProfile()"><i class="fas fa-user"></i></div>
+            <div class="center-info">
+                <img src="img/logo.png" class="header-logo" alt="Prime">
+                <div class="address-text">Qumota ko‘chasi, 18 <i class="fas fa-chevron-right"></i></div>
+            </div>
+            <div class="balance-green"><div class="p-coin">P</div> 0.00</div>
+        </div>
+
+        <!-- [YANGI] AKTIV ZAKAZ BANNERI -->
+        <div id="active-order-banner" class="active-order-banner" onclick="returnToActiveOrder()" style="display: none;">
+            <div class="banner-content">
+                <i class="fas fa-clock"></i>
+                <span>Aktiv buyurtma mavjud</span>
+            </div>
+            <i class="fas fa-chevron-right"></i>
+        </div>
+
+        <div class="promo-container">
+            <div class="promo-box" onclick="goToMap()">
+                <img src="img/car.png" class="promo-car" alt="Car">
+                <div class="promo-text">PRIME<br><small>GO</small></div>
+            </div>
+            <div class="promo-footer"><b data-i18n="promo_taxi">Taksi</b> • 4+ daq</div>
+        </div>
+
+        <div class="content-body">
+            <div class="search-bar" onclick="goToMap()">
+                <i class="fas fa-search"></i>
+                <span data-i18n="search_placeholder">Nima qidiryapsiz?</span>
+                <div class="arrow-circle"><i class="fas fa-chevron-right"></i></div>
+            </div>
+            <div class="locations-list">
+                <div class="loc-item" onclick="selectSavedAddress('home')">
+                    <div class="loc-icon" style="background:#e3f2fd; color:#2196f3"><i class="fas fa-home"></i></div>
+                    <div class="loc-text"><b data-i18n="addr_home">Uy</b><span id="saved-home-addr">Manzil kiritilmagan</span></div>
+                    <div class="edit-addr-btn" onclick="event.stopPropagation(); editSavedAddress('home')"><i class="fas fa-pen"></i></div>
+                </div>
+                <div class="loc-item" onclick="selectSavedAddress('work')">
+                    <div class="loc-icon" style="background:#e8f5e9; color:#4caf50"><i class="fas fa-briefcase"></i></div>
+                    <div class="loc-text"><b data-i18n="addr_work">Ish</b><span id="saved-work-addr">Manzil kiritilmagan</span></div>
+                    <div class="edit-addr-btn" onclick="event.stopPropagation(); editSavedAddress('work')"><i class="fas fa-pen"></i></div>
+                </div>
+                <div id="favorites-list"></div>
+                <div class="loc-item" onclick="addNewFavorite()">
+                    <div class="loc-icon" style="background:#f3f4f6; color:#333"><i class="fas fa-plus"></i></div>
+                    <div class="loc-text"><b data-i18n="fav_add_btn">Yangi manzil</b><span data-i18n="fav_add_desc">Sevimlilarga qo'shish</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PROFIL EKRANI (Frame 27) -->
+    <div id="screen-profile" class="screen">
+        <div class="top-header">
+            <div class="menu-circle" onclick="closeProfile()"><i class="fas fa-arrow-left"></i></div>
+            <div class="center-info"><h3 data-i18n="profile_title">Profil</h3></div>
+            <div style="width: 45px;"></div>
+        </div>
+        <div class="content-body">
+            <div class="profile-card">
+                <div class="profile-avatar">
+                    <i class="fas fa-user"></i>
+                    <div class="edit-icon"><i class="fas fa-pen"></i></div>
+                </div>
+                <div class="profile-details">
+                    <input type="text" id="p-name" placeholder="Ismingizni kiriting" class="profile-name-input" data-i18n="profile_name_placeholder">
+                    <div id="p-phone" class="profile-phone">+998 -- --- -- --</div>
+                </div>
+            </div>
+
+            <div class="profile-menu">
+                <div class="menu-row" onclick="openHistory()">
+                    <div class="icon-box"><i class="fas fa-history"></i></div>
+                    <span data-i18n="profile_history">Buyurtmalar tarixi</span>
+                    <i class="fas fa-chevron-right arrow"></i>
+                </div>
+                <div class="menu-row" onclick="openLanguageModal()">
+                    <div class="icon-box"><i class="fas fa-globe"></i></div>
+                    <span data-i18n="menu_language">Tilni o'zgartirish</span>
+                    <i class="fas fa-chevron-right arrow"></i>
+                </div>
+                <div class="menu-row" onclick="clientLogout()">
+                    <div class="icon-box logout"><i class="fas fa-sign-out-alt"></i></div>
+                    <span class="logout-text" data-i18n="profile_logout">Chiqish</span>
+                </div>
+            </div>
+        </div>
+        <div class="profile-footer" style="padding: 20px;">
+            <button class="btn-yellow" onclick="saveProfile()" data-i18n="profile_save">Saqlash</button>
+        </div>
+    </div>
+
+    <!-- TARIX EKRANI -->
+    <div id="screen-history" class="screen">
+        <div class="top-header">
+            <div class="menu-circle" onclick="closeHistory()"><i class="fas fa-arrow-left"></i></div>
+            <div class="center-info"><h3 data-i18n="history_title">Buyurtmalar Tarixi</h3></div>
+            <div style="width: 45px;"></div>
+        </div>
+        <div class="content-body" id="history-list">
+        </div>
+    </div>
+
+    <!-- RATING EKRANI -->
+    <div id="screen-rating" class="screen">
+        <div class="content-body" style="justify-content: center; align-items: center; text-align: center;">
+            <img src="img/logo.png" style="width: 100px; margin-bottom: 20px;">
+            <h2 data-i18n="rating_title">Sayohat qanday o'tdi?</h2>
+            <p style="color: #888; margin-bottom: 30px;" data-i18n="rating_subtitle">Haydovchiga baho bering</p>
+            
+            <div class="rating-stars" style="display: flex; gap: 10px; margin-bottom: 30px;">
+                <i class="fas fa-star star" onclick="setRating(1)"></i>
+                <i class="fas fa-star star" onclick="setRating(2)"></i>
+                <i class="fas fa-star star" onclick="setRating(3)"></i>
+                <i class="fas fa-star star" onclick="setRating(4)"></i>
+                <i class="fas fa-star star" onclick="setRating(5)"></i>
+            </div>
+
+            <textarea id="rating-comment" placeholder="Izoh qoldiring (ixtiyoriy)" style="width: 100%; padding: 15px; border-radius: 10px; border: 1px solid #ddd; margin-bottom: 20px; resize: none; height: 100px; font-size: 16px;" data-i18n="rating_placeholder"></textarea>
+            
+            <button class="btn-yellow" onclick="submitRating()" data-i18n="rating_btn">Baho berish</button>
+        </div>
+    </div>
+
+    <div id="screen-map" class="screen">
+        <div id="map"></div>
+        
+        <button class="back-btn" onclick="goBackToHome()"><i class="fas fa-chevron-left"></i></button>
+        <button class="gps-btn"><i class="fas fa-crosshairs"></i></button>
+
+        <!-- QIDIRUV EKRANI (Overlay) -->
+        <div id="screen-searching">
+            <div class="radar-container">
+                <div class="radar-circle"></div>
+                <div class="radar-circle"></div>
+                <div class="radar-circle"></div>
+                <div class="radar-pin"></div> 
+            </div>
+
+            <div class="searching-panel">
+                
+                <div class="search-status-row">
+                    <div class="search-title" data-i18n="searching_title">Haydovchi<br>qidirilmoqda...</div>
+                    <div id="search-timer" class="search-timer">00:00</div>
+                </div>
+
+                <div class="progress-bar-container">
+                    <div class="progress-bar-fill"></div>
+                </div>
+
+                <div class="search-actions">
+                    
+                    <div class="action-btn-group">
+                        <div class="circle-btn">
+                            <i class="fas fa-car"></i>
+                        </div>
+                        <span class="action-label" data-i18n="eco">Ekonom</span>
+                    </div>
+
+                    <div class="action-btn-group" onclick="cancelSearch()">
+                        <div class="circle-btn btn-cancel-search">
+                                <i class="fas fa-times"></i>
+                        </div>
+                        <span class="action-label" data-i18n="searching_cancel">Bekor qilish</span>
+                    </div>
+
+                    <div class="action-btn-group">
+                        <div class="circle-btn">
+                            <i class="fas fa-sliders-h"></i>
+                        </div>
+                        <span class="action-label" data-i18n="searching_params">Parametrlar</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="map-bottom-panel">
+            <div class="route-info">
+                <div class="route-row">
+                    <i class="fas fa-map-marker-alt"></i>
+                    <input type="text" id="input-from" value="Aniqlanmoqda..." readonly>
+                </div>
+                <div id="stops-container"></div> <!-- Oraliq manzillar shu yerga tushadi -->
+                <div class="route-line"></div>
+                <div class="route-row">
+                    <i class="fas fa-flag-checkered"></i> 
+                    <div class="search-container">
+                        <input type="text" id="input-to" placeholder="Qayerga?" autocomplete="off" data-i18n="input_to_placeholder">
+                        <div id="search-results" class="autocomplete-list"></div>
+                    </div>
+                    <button class="btn-add-stop" onclick="addStopInput()" title="Manzil qo'shish">+</button>
+                </div>
+            </div>
+
+            <div class="tabs" id="service-tabs">
+                <!-- JS orqali to'ldiriladi -->
+            </div>
+
+            <div class="tariffs" id="tariff-list">
+                <div style="padding:10px; color:#888; font-size:12px">Tariflar yuklanmoqda...</div>
+            </div>
+
+            <div id="tariff-details" style="padding: 0 15px 15px 15px;"></div>
+
+            <!-- [YANGI] Promokod qatori -->
+            <div class="promo-row">
+                <i class="fas fa-tag"></i>
+                <input type="text" id="promo-input" placeholder="Promokod" onchange="checkPromoCode()">
+                <span id="promo-status"></span>
+            </div>
+
+            <div class="order-footer">
+                <div class="payment-method" onclick="openPaymentModal()"><i class="fas fa-money-bill-wave" id="footer-payment-icon"></i></div>
+                <button class="btn-order-yellow" onclick="placeOrder()" data-i18n="order_btn">Buyurtma berish</button>
+                <div class="settings-btn" onclick="openOptionsModal()"><i class="fas fa-sliders-h"></i></div>
+            </div>
+        </div>
+
+        <div id="driver-panel" class="driver-bottom-panel" style="display: none;">
+            <div class="panel-handle"></div>
+            
+            <!-- Status va Vaqt -->
+            <div class="driver-status-header">
+                <div class="status-badge-modern">
+                    <span id="lbl-arrival-time">~3 daq</span>
+                </div>
+                <div class="status-text-modern" id="lbl-driver-status" data-i18n="driver_arriving">Haydovchi siz tomonga kelmoqda</div>
+            </div>
+
+            <!-- Mashina Ma'lumotlari -->
+            <div class="car-info-card">
+                <div class="car-details-modern">
+                    <h2 id="lbl-car-name">Chevrolet Cobalt</h2>
+                    <div class="car-plate-modern" id="lbl-car-plate">01 A 777 AA</div>
+                    <div class="car-color-modern" id="lbl-car-color">Oq rang</div>
+                </div>
+                <img src="img/car.png" class="driver-car-img-large" id="img-driver-car">
+            </div>
+
+            <!-- Haydovchi va Tugmalar -->
+            <div class="driver-interaction-row">
+                <div class="driver-profile-modern">
+                    <div class="driver-avatar-box">
+                        <i class="fas fa-user"></i>
+                        <div class="rating-pill" id="lbl-driver-rating">★ 5.0</div>
+                    </div>
+                    <div class="driver-meta">
+                        <h3 id="lbl-driver-name">Haydovchi</h3>
+                        <span>Prime Driver</span>
+                    </div>
+                </div>
+
+                <div class="driver-action-buttons">
+                    <button class="action-circle-btn chat-btn" onclick="toggleChat()">
+                        <i class="fas fa-comment-dots"></i>
+                    </button>
+                    <a id="btn-call-driver" href="#" class="action-circle-btn phone-btn">
+                        <i class="fas fa-phone-alt"></i>
+                    </a>
+                     <button class="action-circle-btn cancel-btn-modern" onclick="cancelOrder()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="chat-overlay" id="chat-modal">
+        <div class="chat-box">
+            <div class="chat-header">
+                <span>Haydovchi bilan chat</span>
+                <i class="fas fa-times" style="cursor:pointer" onclick="toggleChat()"></i>
+            </div>
+            <div class="chat-body" id="chat-messages">
+            </div>
+            <div class="chat-footer">
+                <input type="text" class="chat-input" id="chat-input" placeholder="Xabar yozing...">
+                <button class="chat-send" onclick="sendMessage()"><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- [YANGI] TO'LOV TURI MODALI -->
+    <div id="paymentModal" class="modal-bottom">
+        <div class="modal-bottom-content">
+            <div class="modal-header-row">
+                <h3 data-i18n="payment_title">To'lov turi</h3>
+                <span class="close-btn" onclick="closePaymentModal()">&times;</span>
+            </div>
+            <div class="payment-option selected" id="pay-cash" onclick="selectPayment('naqd')">
+                <div class="icon-box"><i class="fas fa-money-bill-wave"></i></div>
+                <span data-i18n="payment_cash">Naqd pul</span>
+                <i class="fas fa-check check-icon"></i>
+            </div>
+            <div class="payment-option" id="pay-card" onclick="selectPayment('karta')">
+                <div class="icon-box"><i class="fas fa-credit-card"></i></div>
+                <span data-i18n="payment_card">Karta (Click / Payme)</span>
+                <i class="fas fa-check check-icon"></i>
+            </div>
+        </div>
+    </div>
+
+    <!-- [YANGI] OPSIYALAR MODALI -->
+    <div id="optionsModal" class="modal-bottom">
+        <div class="modal-bottom-content">
+            <div class="modal-header-row">
+                <h3 data-i18n="options_title">Sayohat istaklari</h3>
+                <span class="close-btn" onclick="closeOptionsModal()">&times;</span>
+            </div>
+            <div class="option-row">
+                <span><i class="fas fa-snowflake"></i> <span data-i18n="option_ac">Konditsioner</span></span>
+                <label class="switch-sm"><input type="checkbox" id="opt-ac"><span class="slider-sm round"></span></label>
+            </div>
+            <div class="option-row">
+                <span><i class="fas fa-suitcase"></i> <span data-i18n="option_luggage">Bo'sh yukxona</span></span>
+                <label class="switch-sm"><input type="checkbox" id="opt-luggage"><span class="slider-sm round"></span></label>
+            </div>
+            <button class="btn-yellow" style="margin-top: 20px;" onclick="closeOptionsModal()" data-i18n="save_btn">Saqlash</button>
+        </div>
+    </div>
+
+    <!-- [YANGI] TIL MODALI -->
+    <div id="languageModal" class="modal-bottom">
+        <div class="modal-bottom-content">
+            <div class="modal-header-row">
+                <h3 data-i18n="menu_language">Tilni o'zgartirish</h3>
+                <span class="close-btn" onclick="closeLanguageModal()">&times;</span>
+            </div>
+            <div class="payment-option" onclick="changeLanguage('uz')">
+                <div class="icon-box"><img src="https://flagcdn.com/w40/uz.png" width="25"></div>
+                <span>O'zbekcha</span>
+                <i class="fas fa-check check-icon" id="lang-check-uz"></i>
+            </div>
+            <div class="payment-option" onclick="changeLanguage('ru')">
+                <div class="icon-box"><img src="https://flagcdn.com/w40/ru.png" width="25"></div>
+                <span>Русский</span>
+                <i class="fas fa-check check-icon" id="lang-check-ru"></i>
+            </div>
+            <div class="payment-option" onclick="changeLanguage('en')">
+                <div class="icon-box"><img src="https://flagcdn.com/w40/gb.png" width="25"></div>
+                <span>English</span>
+                <i class="fas fa-check check-icon" id="lang-check-en"></i>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

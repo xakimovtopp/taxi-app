@@ -1,0 +1,937 @@
+// client/driver.js - TO'LIQ TUZATILGAN VERSIYA
+
+// [YANGI] Global o'zgaruvchilar va funksiyalarni eng tepaga olamiz (Xatolik oldini olish uchun)
+var pendingOrder = null; 
+var waitingTimerInterval = null; // [YANGI] Kutish taymeri
+var socket;
+
+// [YANGI] Ovozli navigatsiya o'zgaruvchilari
+let navSteps = [];
+let currentStepIndex = 0;
+let isNavigating = false;
+let lastSpokenIndex = -1;
+
+window.acceptPendingOrder = function() {
+    acceptOrderById(pendingOrder ? pendingOrder.id : null);
+};
+
+window.skipOrder = function() {
+    const panel = document.getElementById('panel-request');
+    if(panel) panel.classList.add('hidden-panel');
+    pendingOrder = null;
+};
+
+// Socket ulanishini himoyalaymiz (Agar io() topilmasa, kod to'xtab qolmaydi)
+try { 
+    socket = io(); 
+} catch(e) { console.error("Socket xatosi:", e); }
+// [YANGI] Agar socket ulanmasa, kod sinmasligi uchun bo'sh obyekt yaratamiz
+if (!socket) socket = { on: function(){}, emit: function(){} };
+
+var API_BASE = '';
+let currentPhone = localStorage.getItem('d_phone') || null;
+let map = null;
+let driverMarker = null;
+let driverMarkerEl = null; // Marker elementi
+let currentOrder = null;
+let activeOrderId = null; // Aktiv zakaz ID si
+let stopMarkers = []; // Oraliq bekat markerlari
+let tripStatus = 'yetib_keldi'; // yetib_keldi -> boshlash -> yakunlash
+let availableOrders = []; // Ro'yxatdagi zakazlar
+
+// --- 1. LOGIN ---
+window.loginDriver = async function() {
+    const phone = getDriverPhone();
+    if(!phone) return alert("Raqamni kiriting!");
+    
+    try {
+        const res = await fetch(`${API_BASE}/api/driver/login`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ phone })
+        });
+        const data = await res.json();
+        
+        if(data.success) {
+            currentPhone = phone;
+            localStorage.setItem('d_phone', phone);
+            const loginScreen = document.getElementById('screen-login');
+            if(loginScreen) {
+                loginScreen.classList.remove('active');
+                loginScreen.style.display = 'none';
+            }
+            openMap();
+            loadProfile();
+            if(data.activeOrder) {
+                restoreActiveOrder(data.activeOrder);
+            }
+        } else {
+            alert(data.error || "Bunday haydovchi topilmadi!");
+        }
+    } catch(e) { console.error("Login error:", e); }
+};
+
+function getDriverPhone() {
+    let input = document.getElementById('login-phone');
+    if(!input) return null;
+    let val = input.value.replace(/\D/g, '');
+    if(!val) val = "901234567"; // Default test uchun
+    return "+998" + (val.startsWith('998') ? val.substring(3) : val);
+}
+
+// Haydovchi statusini va aktiv zakazni tekshirish
+async function checkDriverStatus() {
+    if(!currentPhone) return;
+    try {
+        const res = await fetch(`${API_BASE}/api/driver/login`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ phone: currentPhone })
+        });
+        const data = await res.json();
+        if(data.success) {
+            loadProfile();
+            if(data.activeOrder) restoreActiveOrder(data.activeOrder);
+        }
+    } catch(e) { console.error(e); }
+}
+
+async function loadProfile() {
+    if(!currentPhone) return;
+    try {
+        // Profil va Statistika
+        const res = await fetch(`${API_BASE}/api/driver/profile?phone=${encodeURIComponent(currentPhone)}`);
+        let driver = await res.json();
+        if(driver.error) return;
+
+        // [YANGI] Statistikani hisoblash (Agar serverdan kelmasa)
+        if (!driver.stats) {
+            const today = new Date().toLocaleDateString("ru-RU").substring(0, 5); // DD.MM
+            const history = driver.daromad_tarixi || [];
+            driver.stats = {
+                daily: history.find(h => h.sana === today)?.summa || 0,
+                weekly: history.slice(-7).reduce((a, b) => a + b.summa, 0),
+                monthly: history.slice(-30).reduce((a, b) => a + b.summa, 0)
+            };
+        }
+
+        // Buyurtmalar Tarixi
+        const resOrders = await fetch(`${API_BASE}/api/driver/orders-history?phone=${encodeURIComponent(currentPhone)}`);
+        const orders = await resOrders.json();
+
+        renderDriverDashboard(driver, orders);
+    } catch(e) { console.error(e); }
+}
+
+function renderDriverDashboard(driver, orders) {
+    let dashboard = document.getElementById('screen-dashboard');
+    if(!dashboard) {
+        dashboard = document.createElement('div');
+        dashboard.id = 'screen-dashboard';
+        dashboard.className = 'screen';
+        document.body.appendChild(dashboard);
+    }
+
+    const fmt = (num) => (num || 0).toLocaleString() + " so'm";
+
+    dashboard.innerHTML = `
+        <div class="top-header" style="padding-bottom:10px;">
+            <div class="menu-circle" onclick="openMap()"><i class="fas fa-map"></i></div>
+            <div class="center-info"><h3>Kabinet</h3></div>
+            <div style="width:45px"></div>
+        </div>
+
+        <div class="content-body" style="padding-top:0;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; background:#f9f9f9; padding:15px; border-radius:15px;">
+                <div>
+                    <div style="font-size:12px; color:#888;">Balans</div>
+                    <div style="font-size:20px; font-weight:800;">${fmt(driver.balans)}</div>
+                </div>
+                <div style="text-align:right;">
+                    <label class="switch">
+                        <input type="checkbox" id="driver-status-switch" onchange="toggleStatus()" ${driver.status === 'online' ? 'checked' : ''}>
+                        <span class="slider round"></span>
+                    </label>
+                    <div id="status-text" style="font-size:12px; font-weight:600; margin-top:5px; color:${driver.status === 'online' ? '#4ADE80' : '#888'}">
+                        ${driver.status === 'online' ? 'Online' : 'Offline'}
+                    </div>
+                </div>
+            </div>
+
+            <div class="profile-card" style="background:white; padding:20px; border-radius:20px; box-shadow:0 5px 15px rgba(0,0,0,0.05); margin-bottom:20px; text-align:center;">
+                <div style="width:80px; height:80px; background:#f3f4f6; border-radius:50%; margin:0 auto 10px; display:flex; align-items:center; justify-content:center; font-size:30px; color:#ccc;">
+                    <i class="fas fa-user"></i>
+                </div>
+                <h2 style="font-size:18px; margin-bottom:5px;">${driver.lastname} ${driver.firstname}</h2>
+                <div style="color:#888; font-size:14px; margin-bottom:15px;">${driver.partner_name || 'Kompaniya'}</div>
+                
+                <div style="display:flex; justify-content:center; gap:10px;">
+                    <div style="background:#f9f9f9; padding:8px 15px; border-radius:10px; font-size:13px;">
+                        <b>${driver.marka} ${driver.model}</b><br>${driver.raqam}
+                    </div>
+                    <div style="background:#fff9c4; padding:8px 15px; border-radius:10px; font-size:13px; color:#b45309;">
+                        ★ ${driver.reyting.toFixed(1)}
+                    </div>
+                </div>
+            </div>
+
+            <h3 style="font-size:16px; margin-bottom:10px;">Statistika</h3>
+            <div class="stat-grid">
+                <div class="stat-box">
+                    <div class="stat-val" style="font-size:16px;">${fmt(driver.stats.daily)}</div>
+                    <div class="stat-label">Bugun</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-val" style="font-size:16px;">${fmt(driver.stats.weekly)}</div>
+                    <div class="stat-label">Hafta</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-val" style="font-size:16px;">${fmt(driver.stats.monthly)}</div>
+                    <div class="stat-label">Oy</div>
+                </div>
+            </div>
+
+            <!-- [YANGI] Grafik -->
+            <div style="background:white; padding:15px; border-radius:20px; margin-bottom:20px; box-shadow:0 5px 15px rgba(0,0,0,0.05);">
+                <h4 style="margin:0 0 15px 0; font-size:15px; color:#333;">Daromad Grafigi (7 kun)</h4>
+                <canvas id="incomeChart" style="max-height: 200px;"></canvas>
+            </div>
+
+            <h3 style="font-size:16px; margin-bottom:10px; margin-top:10px;">Buyurtmalar Tarixi</h3>
+            <div id="orders-history-list">
+                ${orders.length === 0 ? '<div style="text-align:center; color:#999; padding:20px;">Buyurtmalar yo\'q</div>' : ''}
+                ${orders.map(o => {
+                    let stColor = o.status === 'finished' ? 'green' : (o.status === 'cancelled' ? 'red' : 'orange');
+                    let stText = o.status === 'finished' ? 'Yakunlandi' : (o.status === 'cancelled' ? 'Bekor qilindi' : o.status);
+                    return `
+                    <div style="background:white; padding:15px; border-radius:15px; margin-bottom:10px; border:1px solid #eee;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                            <span style="font-weight:700; font-size:16px;">${o.narx}</span>
+                            <span style="font-size:12px; color:${stColor}; font-weight:600;">${stText}</span>
+                        </div>
+                        <div style="font-size:13px; color:#555; margin-bottom:3px;"><i class="fas fa-map-marker-alt"></i> ${o.qayerdan}</div>
+                        <div style="font-size:13px; color:#555;"><i class="fas fa-flag-checkered"></i> ${o.qayerga}</div>
+                        <div style="text-align:right; font-size:11px; color:#999; margin-top:5px;">${new Date(o.id).toLocaleString()}</div>
+                    </div>
+                    `;
+                }).join('')}
+            </div>
+            
+            <div style="height:80px;"></div>
+        </div>
+    `;
+
+    // [YANGI] Grafikni chizish
+    setTimeout(() => {
+        if(typeof renderIncomeChart === 'function') renderIncomeChart(driver.daromad_tarixi);
+    }, 300);
+}
+
+window.toggleStatus = function() {
+    const dashSwitch = document.getElementById('driver-status-switch');
+    const isOn = dashSwitch ? dashSwitch.checked : false;
+    const txt = isOn ? "Online" : "Offline";
+    const color = isOn ? "#4ADE80" : "#888";
+
+    const stText = document.getElementById('status-text');
+    if(stText) {
+        stText.innerText = txt;
+        stText.style.color = color;
+    }
+    
+    if(isOn) socket.emit('driver_online', { phone: currentPhone });
+    else socket.emit('driver_offline', { phone: currentPhone });
+};
+
+// ==============================
+// XARITA VA NAVIGATSIYA
+// ==============================
+function openMap() {
+    const dash = document.getElementById('screen-dashboard');
+    if(dash) dash.classList.remove('active');
+    
+    document.getElementById('screen-map').classList.add('active');
+    
+    if(!map) {
+        const styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+        map = new maplibregl.Map({
+            container: 'map',
+            style: styleUrl,
+            center: [65.7900, 38.8410],
+            zoom: 17,
+            pitch: 60, 
+            bearing: 0
+        });
+
+        map.on('styleimagemissing', (e) => {
+            const image = new Image(1, 1);
+            image.onload = () => { if (!map.hasImage(e.id)) map.addImage(e.id, image); };
+            image.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFhAJ/wlseKgAAAABJRU5ErkJggg==';
+        });
+
+        map.on('load', () => {
+            // 3D Binolar
+            const sourceId = map.getSource('openmaptiles') ? 'openmaptiles' : 'openfreemap';
+            if (!map.getLayer('3d-buildings') && map.getSource(sourceId)) {
+                map.addLayer({
+                    'id': '3d-buildings', 'source': sourceId, 'source-layer': 'building',
+                    'filter': ['==', 'extrude', 'true'], 'type': 'fill-extrusion', 'minzoom': 15,
+                    'paint': { 
+                        'fill-extrusion-color': '#e0e0e0',
+                        'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['coalesce', ['get', 'height'], 0]],
+                        'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['coalesce', ['get', 'min_height'], 0]],
+                        'fill-extrusion-opacity': 0.9 
+                    }
+                });
+            }
+
+            const el = document.createElement('div');
+            el.innerHTML = `<svg width="60" height="60" viewBox="0 0 100 100" style="filter: drop-shadow(0 5px 5px rgba(0,0,0,0.3));"><path d="M50 5 L10 85 L50 65 Z" fill="#F4D03F" stroke="white" stroke-width="2"/><path d="M50 5 L90 85 L50 65 Z" fill="#D4AC0D" stroke="white" stroke-width="2"/></svg>`;
+            el.className = 'driver-marker';
+            driverMarkerEl = new maplibregl.Marker({ element: el }).setLngLat([65.7900, 38.8410]).addTo(map);
+        });
+        
+        // GPS
+        if(navigator.geolocation) {
+            navigator.geolocation.watchPosition(pos => {
+                const {latitude, longitude, heading} = pos.coords;
+                // Null qiymat tekshiruvi
+                if (latitude == null || longitude == null) return;
+                
+                const coords = [longitude, latitude];
+                
+                if(driverMarkerEl) driverMarkerEl.setLngLat(coords);
+                
+                const switchEl = document.getElementById('driver-status-switch');
+                if(switchEl && switchEl.checked) {
+                    socket.emit('driver_location', { id: currentPhone, lat: latitude, lng: longitude });
+                }
+                
+                map.easeTo({
+                    center: coords,
+                    bearing: heading || 0,
+                    pitch: 60,
+                    zoom: 18,
+                    duration: 1000 
+                });
+            }, err => {
+                console.warn("GPS Xatosi:", err.message);
+                // GPS ishlamasa ham xaritani ko'rsatishda davom etamiz
+            }, { enableHighAccuracy: true, maximumAge: 0 });
+        }
+    }
+    setTimeout(() => map.resize(), 300);
+}
+
+window.openDashboard = function() {
+    if (!document.getElementById('screen-dashboard')) {
+        const div = document.createElement('div');
+        div.id = 'screen-dashboard';
+        div.className = 'screen';
+        document.body.appendChild(div);
+    }
+    document.getElementById('screen-map').classList.remove('active');
+    document.getElementById('screen-dashboard').classList.add('active');
+    loadProfile();
+};
+
+// ==============================
+// BUYURTMA LOGIKASI
+// ==============================
+
+socket.on('yangi_buyurtma', (order) => {
+    pendingOrder = order;
+    
+    document.getElementById('req-address').innerText = order.qayerdan;
+    document.getElementById('req-info').innerText = "Yangi Buyurtma";
+    document.getElementById('panel-request').classList.remove('hidden-panel');
+    
+    addOrderToList(order);
+    playNotificationSound();
+    
+    if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
+});
+
+function acceptOrderById(orderId) {
+    if(!orderId) return;
+    
+    // Xonaga ulanish
+    socket.emit('join_chat', orderId);
+
+    socket.emit('driver_accept_order', { 
+        orderId: orderId, 
+        phone: currentPhone,
+        driverName: "Haydovchi" 
+    });
+    document.getElementById('panel-request').classList.add('hidden-panel');
+    toggleOrdersList(false);
+}
+
+socket.on('order_accepted_success', (order) => {
+    currentOrder = order;
+    activeOrderId = order.id;
+    tripStatus = 'yetib_keldi';
+    
+    const panel = document.getElementById('panel-active');
+    if(panel) {
+        panel.classList.remove('hidden-panel');
+        const addrEl = document.getElementById('act-address');
+        if(addrEl) addrEl.innerText = "Mijoz: " + order.qayerdan;
+        
+        if(typeof resetActiveSlider === 'function') resetActiveSlider("YETIB KELDIM", "state-yellow", nextStatus);
+    }
+    
+    if(driverMarkerEl) {
+        const dPos = driverMarkerEl.getLngLat();
+        drawRoute(dPos.lat, dPos.lng, order.fromLat, order.fromLng, [], true); // [YANGI] Navigatsiya bor
+    }
+});
+
+// Aktiv buyurtmani qayta tiklash
+function restoreActiveOrder(order) {
+    currentOrder = order;
+    activeOrderId = order.id;
+    
+    // Qayta kirganda serverdagi xonaga (room) ulanish
+    if (socket) {
+        socket.emit('join_chat', order.id);
+    }
+
+    const panel = document.getElementById('panel-active');
+    if(panel) {
+        document.getElementById('panel-request').classList.add('hidden-panel');
+        panel.classList.remove('hidden-panel');
+        const addrEl = document.getElementById('act-address');
+        if(addrEl) addrEl.innerText = (order.status === 'started') ? ("Manzil: " + order.qayerga) : ("Mijoz: " + order.qayerdan);
+        
+        if(typeof resetActiveSlider === 'function') {
+            if(order.status === 'accepted') {
+                tripStatus = 'yetib_keldi';
+                resetActiveSlider("YETIB KELDIM", "state-yellow", nextStatus);
+            } else if(order.status === 'arrived') {
+                tripStatus = 'boshlash';
+                resetActiveSlider("BOSHLASH", "state-blue", nextStatus);
+                // [YANGI] Agar serverda vaqt bo'lsa, o'shandan davom ettiramiz
+                if (order.arrived_time) startWaitingTimer(order.arrived_time);
+                else startWaitingTimer(new Date()); // Fallback
+            } else if(order.status === 'started') {
+                tripStatus = 'yakunlash';
+                resetActiveSlider("YAKUNLASH", "state-red", nextStatus);
+            }
+        }
+    }
+    socket.emit('driver_online', { phone: currentPhone });
+}
+
+window.nextStatus = function() {
+    if(!currentOrder) return;
+    
+    if(tripStatus === 'yetib_keldi') {
+        socket.emit('driver_update_status', { orderId: currentOrder.id, status: 'arrived' });
+        tripStatus = 'boshlash';
+        
+        if(typeof resetActiveSlider === 'function') resetActiveSlider("BOSHLASH", "state-blue", nextStatus);
+        startWaitingTimer(new Date()); // [YANGI] Taymerni boshlash
+        
+        if (map && map.getSource('route')) {
+            map.getSource('route').setData({type: 'FeatureCollection', features: []});
+        }
+    } 
+    else if(tripStatus === 'boshlash') {
+        socket.emit('driver_update_status', { orderId: currentOrder.id, status: 'started' });
+        tripStatus = 'yakunlash';
+        stopWaitingTimer(); // [YANGI] Taymerni to'xtatish
+        if(document.getElementById('act-address')) document.getElementById('act-address').innerText = "Manzil: " + currentOrder.qayerga;
+        if(typeof resetActiveSlider === 'function') resetActiveSlider("YAKUNLASH", "state-red", nextStatus);
+        
+        if (driverMarkerEl) {
+            const dPos = driverMarkerEl.getLngLat();
+            drawRoute(dPos.lat, dPos.lng, currentOrder.toLat, currentOrder.toLng, currentOrder.stops, true); // [YANGI] Navigatsiya bor
+        } else {
+            drawRoute(currentOrder.fromLat, currentOrder.fromLng, currentOrder.toLat, currentOrder.toLng, currentOrder.stops, true); // [YANGI] Navigatsiya bor
+        }
+    }
+    else if(tripStatus === 'yakunlash') {
+        socket.emit('driver_update_status', { orderId: currentOrder.id, status: 'finished' });
+        
+        let finalPrice = currentOrder.narx || "Kelishilgan";
+        alert("Sayohat tugadi!\nTo'lov summasi: " + finalPrice);
+
+        if(document.getElementById('panel-active')) document.getElementById('panel-active').classList.add('hidden-panel');
+        currentOrder = null;
+        activeOrderId = null;
+        tripStatus = 'yetib_keldi';
+        
+        if (map && map.getSource('route')) {
+            map.getSource('route').setData({type: 'FeatureCollection', features: []});
+        }
+        stopWaitingTimer();
+        stopMarkers.forEach(m => m.remove());
+        stopMarkers = [];
+        
+        goOnline();
+        loadProfile();
+        stopNavigation(); // [YANGI]
+    }
+};
+
+window.cancelActiveOrder = function() { 
+    if(confirm("Haqiqatan ham bekor qilasizmi?")) {
+        socket.emit('driver_update_status', { orderId: activeOrderId, status: 'cancelled' });
+        alert("Buyurtma bekor qilindi!");
+
+        document.getElementById('panel-active').classList.add('hidden-panel');
+        currentOrder = null;
+        activeOrderId = null;
+        tripStatus = 'yetib_keldi';
+        stopWaitingTimer();
+        
+        if (map && map.getLayer('route')) map.removeLayer('route');
+        if (map && map.getSource('route')) map.removeSource('route');
+        
+        goOnline();
+        loadProfile();
+    } 
+};
+
+socket.on('order_cancelled', (orderId) => {
+    if ((currentOrder && String(currentOrder.id) === String(orderId)) || (activeOrderId && String(activeOrderId) === String(orderId))) {
+        try { playNotificationSound(); } catch(e){}
+        
+        if(document.getElementById('panel-active')) document.getElementById('panel-active').classList.add('hidden-panel');
+        if(document.getElementById('panel-request')) document.getElementById('panel-request').classList.add('hidden-panel');
+
+        currentOrder = null;
+        activeOrderId = null;
+        tripStatus = 'yetib_keldi';
+        stopWaitingTimer();
+        
+        if (map && map.getLayer('route')) map.removeLayer('route');
+        if (map && map.getSource('route')) map.removeSource('route');
+
+        stopMarkers.forEach(m => m.remove());
+        stopMarkers = [];
+        
+        goOnline();
+        loadProfile();
+        
+        // [TUZATISH] Alertni ozgina kechiktiramiz, shunda UI yangilanib ulguradi
+        setTimeout(() => alert("Mijoz buyurtmani bekor qildi."), 100);
+        stopNavigation(); // [YANGI]
+    }
+});
+
+// [YANGI] Admin xabarini qabul qilish
+socket.on('admin_message', (msg) => {
+    playNotificationSound();
+    alert("📢 ADMIN XABARI:\n\n" + msg);
+});
+
+socket.on('remove_order', (orderId) => {
+    if (pendingOrder && String(pendingOrder.id) === String(orderId)) {
+        document.getElementById('panel-request').classList.add('hidden-panel');
+        pendingOrder = null;
+        alert("Buyurtma bekor qilindi yoki boshqa haydovchi oldi!");
+        renderOrdersList(); 
+    }
+    availableOrders = availableOrders.filter(o => o.id !== orderId);
+    renderOrdersList();
+});
+
+async function drawRoute(lat1, lng1, lat2, lng2, stops = [], startNav = false) {
+    if(!map) return;
+    // Null tekshiruvi
+    if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return;
+
+    stopMarkers.forEach(m => m.remove());
+    stopMarkers = [];
+
+    let waypoints = `${lng1},${lat1}`;
+
+    if (stops && Array.isArray(stops)) {
+        stops.forEach(stop => {
+            if (stop.lat && stop.lng) {
+                waypoints += `;${stop.lng},${stop.lat}`;
+                
+                const el = document.createElement('div');
+                el.style.width = '15px'; el.style.height = '15px';
+                el.style.backgroundColor = 'black'; el.style.borderRadius = '50%';
+                el.style.border = '2px solid white';
+                
+                const sm = new maplibregl.Marker({ element: el })
+                    .setLngLat([stop.lng, stop.lat])
+                    .addTo(map);
+                stopMarkers.push(sm);
+            }
+        });
+    }
+
+    waypoints += `;${lng2},${lat2}`;
+
+    const url = `https://router.project-osrm.org/route/v1/driving/${waypoints}?overview=full&geometries=geojson&steps=true`; // [YANGI] steps=true
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if(data.routes && data.routes.length > 0) {
+            const routeGeoJSON = data.routes[0].geometry;
+            
+            if (map.getSource('route')) {
+                map.getSource('route').setData(routeGeoJSON);
+            } else {
+                map.addSource('route', {
+                    'type': 'geojson',
+                    'data': routeGeoJSON
+                });
+                map.addLayer({
+                    'id': 'route',
+                    'type': 'line',
+                    'source': 'route',
+                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
+                    'paint': {
+                        'line-color': '#007AFF', 
+                        'line-width': 8,
+                        'line-opacity': 0.8
+                    }
+                });
+            }
+
+            const coordinates = routeGeoJSON.coordinates;
+            const bounds = coordinates.reduce((bounds, coord) => {
+                return bounds.extend(coord);
+            }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+
+            map.fitBounds(bounds, { padding: 80 });
+
+            // [YANGI] Navigatsiyani boshlash
+            if (startNav && data.routes[0].legs && data.routes[0].legs.length > 0) {
+                // 1 soniya kutib keyin boshlaymiz (Avvalgi gap tugashi uchun)
+                setTimeout(() => startNavigation(data.routes[0].legs[0].steps), 1000);
+            }
+        }
+    } catch(e) { console.error("Marshrut xatosi:", e); }
+}
+
+socket.on('active_orders_list', (orders) => {
+    availableOrders = orders;
+    renderOrdersList();
+});
+
+function addOrderToList(order) {
+    if(!availableOrders.find(o => o.id === order.id)) {
+        availableOrders.push(order);
+        renderOrdersList();
+    }
+}
+
+function renderOrdersList() {
+    const panel = document.getElementById('orders-list-panel');
+    const countBadge = document.getElementById('orders-count');
+    
+    if(countBadge) {
+        countBadge.innerText = availableOrders.length;
+        countBadge.style.display = availableOrders.length > 0 ? 'inline-block' : 'none';
+    }
+
+    if(!panel) return;
+
+    if(availableOrders.length === 0) {
+        panel.innerHTML = '<div style="text-align:center; color:#888; padding:10px;">Hozircha zakazlar yo\'q</div>';
+        return;
+    }
+
+    panel.innerHTML = '';
+    availableOrders.forEach(order => {
+        const div = document.createElement('div');
+        div.className = 'order-card';
+        div.innerHTML = `
+            <h4>${order.qayerdan} ➝ ${order.qayerga}</h4>
+            <p>Narx: <b>${order.narx}</b> | Masofa: ~${order.masofa || '?'} km</p>
+            <button class="btn-accept" onclick="acceptOrderById(${order.id})">Qabul qilish</button>
+        `;
+        panel.appendChild(div);
+    });
+}
+
+function toggleOrdersList(forceState) {
+    const panel = document.getElementById('orders-list-panel');
+    if(!panel) return;
+    if (typeof forceState === 'boolean') {
+        panel.style.display = forceState ? 'block' : 'none';
+    } else {
+        panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+    }
+}
+
+window.toggleNightMode = function() {
+    const body = document.body;
+    body.classList.toggle('dark-mode');
+    const isDark = body.classList.contains('dark-mode');
+    localStorage.setItem('driver_dark_mode', isDark);
+    
+    const chk = document.getElementById('toggle-night');
+    if(chk) chk.checked = isDark;
+};
+
+window.openSettings = function() {
+    document.getElementById('modal-settings').classList.remove('hidden-panel');
+    const chk = document.getElementById('toggle-night');
+    if(chk) chk.checked = document.body.classList.contains('dark-mode');
+};
+
+window.closeModal = function(id) {
+    document.getElementById(id).classList.add('hidden-panel');
+};
+
+if(localStorage.getItem('driver_dark_mode') === 'true') {
+    document.body.classList.add('dark-mode');
+}
+
+socket.on('heatmap_update', (zones) => {
+    if (!map) return;
+    drawDriverHeatmap(zones);
+});
+
+function drawDriverHeatmap(zones) {
+    if (!map.getSource('heat_zones')) {
+        map.addSource('heat_zones', {
+            'type': 'geojson',
+            'data': { 'type': 'FeatureCollection', 'features': [] }
+        });
+        
+        map.addLayer({
+            'id': 'heat_zones_layer',
+            'type': 'fill',
+            'source': 'heat_zones',
+            'paint': {
+                'fill-color': '#ff0000',
+                'fill-opacity': 0.4
+            }
+        });
+    }
+
+    if (map.getLayer('heat_zones_layer')) map.removeLayer('heat_zones_layer');
+    if (map.getSource('heat_zones')) map.removeSource('heat_zones');
+
+    zones.forEach(z => {
+        const id = 'heat_zone_' + z.id;
+        if (map.getSource(id)) {
+            map.getSource(id).setData({ type: 'Point', coordinates: [z.lng, z.lat] });
+        } else {
+            const el = document.createElement('div');
+            el.className = 'heat-marker';
+            el.style.width = (z.radius / 5) + 'px'; 
+            el.style.height = (z.radius / 5) + 'px';
+            el.style.background = 'rgba(255, 0, 0, 0.3)';
+            el.style.borderRadius = '50%';
+            el.style.boxShadow = '0 0 20px rgba(255,0,0,0.5)';
+            
+            new maplibregl.Marker({ element: el })
+                .setLngLat([z.lng, z.lat])
+                .addTo(map);
+        }
+    });
+}
+
+// [YANGI] Daromad grafigini chizish funksiyasi
+function renderIncomeChart(history) {
+    if (!history) history = [];
+    
+    // Chart.js kutubxonasini yuklash (agar yo'q bo'lsa)
+    if (typeof Chart === 'undefined') {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+        script.onload = () => renderIncomeChart(history);
+        document.head.appendChild(script);
+        return;
+    }
+
+    const ctx = document.getElementById('incomeChart');
+    if (!ctx) return;
+
+    // Oxirgi 7 kunni olish
+    const data = history.slice(-7);
+    const labels = data.map(d => d.sana);
+    const values = data.map(d => d.summa);
+
+    // Agar eski chart bo'lsa yo'q qilish
+    if (window.driverIncomeChart instanceof Chart) {
+        window.driverIncomeChart.destroy();
+    }
+
+    window.driverIncomeChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: "Daromad (so'm)",
+                data: values,
+                backgroundColor: '#FFD600',
+                borderRadius: 6,
+                barThickness: 20
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: '#f0f0f0' }, ticks: { font: { size: 10 } } },
+                x: { grid: { display: false }, ticks: { font: { size: 10 } } }
+            }
+        }
+    });
+}
+
+function playNotificationSound() {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.5);
+        gain.gain.setValueAtTime(0.5, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+    } catch (e) { console.error("Audio error", e); }
+}
+
+window.goOnline = function() { 
+    document.getElementById('panel-offline').classList.add('hidden-panel'); 
+    socket.emit('driver_online', { phone: currentPhone }); 
+    alert("Siz liniyadasiz! Buyurtma kuting..."); 
+};
+window.toggleOfflineMode = function() { 
+    if(currentOrder) { alert("Avval aktiv zakazni tugating!"); return; } 
+    document.getElementById('panel-offline').classList.remove('hidden-panel'); 
+    socket.emit('driver_offline', { phone: currentPhone }); 
+};
+window.resetCamera = function() { 
+    if(map) map.easeTo({ pitch: 60, bearing: 0, zoom: 17 }); 
+};
+// window.openHistory = openHistory; // [TUZATISH] Bu qator xato berayotgan edi (funksiya yo'q). O'chiramiz.
+window.closeDashboard = function() {
+    const dash = document.getElementById('screen-dashboard');
+    if(dash) dash.classList.remove('active');
+    document.getElementById('screen-map').classList.add('active');
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+    let profileBtn = document.querySelector('#screen-map .menu-circle i.fa-user');
+    if (profileBtn) {
+        profileBtn = profileBtn.closest('.menu-circle');
+    } else {
+        profileBtn = document.querySelector('#screen-map .menu-circle');
+    }
+
+    if(profileBtn) {
+        profileBtn.removeAttribute('onclick');
+        profileBtn.onclick = function(e) {
+            e.preventDefault();
+            openDashboard();
+        };
+    }
+});
+
+// --- INIT (ENG OXIRIDA) ---
+if(currentPhone) {
+    checkDriverStatus(); // Status va aktiv zakazni tekshirish
+    const loginScreen = document.getElementById('screen-login');
+    if(loginScreen) {
+        loginScreen.classList.remove('active');
+        loginScreen.style.display = 'none';
+    }
+    openMap();
+}
+
+// ==============================
+// OVOZLI NAVIGATSIYA TIZIMI
+// ==============================
+
+function startNavigation(steps) {
+    navSteps = steps;
+    currentStepIndex = 0;
+    isNavigating = true;
+    lastSpokenIndex = -1;
+    
+    // Birinchi qadamni gapirish
+    if (navSteps.length > 0) {
+        announceStep(0); // Birinchi instruktsiya (Masalan: "Harakatni boshlang")
+    }
+}
+
+function stopNavigation() {
+    isNavigating = false;
+    navSteps = [];
+    currentStepIndex = 0;
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+}
+
+function updateNavigation(lat, lng) {
+    if (!navSteps[currentStepIndex]) return;
+
+    // Keyingi manevr nuqtasi
+    let nextStep = navSteps[currentStepIndex + 1];
+    if (!nextStep) return; 
+
+    const targetLat = nextStep.maneuver.location[1];
+    const targetLng = nextStep.maneuver.location[0];
+    
+    const dist = getDistMeters(lat, lng, targetLat, targetLng);
+
+    // Agar manevrga 40 metrdan kam qolsa, keyingi qadamni gapiramiz
+    if (dist < 40) {
+        currentStepIndex++;
+        announceStep(currentStepIndex);
+    }
+}
+
+function announceStep(index) {
+    if (index === lastSpokenIndex) return;
+    lastSpokenIndex = index;
+
+    const step = navSteps[index];
+    const type = step.maneuver.type;
+    const modifier = step.maneuver.modifier;
+    const dist = Math.round(step.distance);
+    
+    let text = "";
+
+    if (type === 'depart') text = `Harakatni boshlang. ${dist} metr to'g'riga.`;
+    else if (type === 'arrive') { text = "Manzilga yetib keldingiz."; stopNavigation(); }
+    else if (type === 'turn') {
+        if (modifier && modifier.includes('left')) text = "Chapga buriling.";
+        else if (modifier && modifier.includes('right')) text = "O'ngga buriling.";
+        if (dist > 0) text += ` Keyin ${dist} metr to'g'riga.`;
+    } else {
+        text = `To'g'riga ${dist} metr.`;
+    }
+
+    speak(text);
+}
+
+function speak(text) {
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1.1; // Sal tezroq gapirish
+        // utterance.lang = 'uz-UZ'; // Agar qurilmada o'zbek tili bo'lsa
+        window.speechSynthesis.speak(utterance);
+    }
+}
+
+function getDistMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; 
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
