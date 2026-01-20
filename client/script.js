@@ -50,9 +50,20 @@ var carIcon = L.divIcon({
 function getStartIcon() {
     return L.divIcon({
         className: 'my-custom-pin',
-        html: `<div style="font-size:35px; filter: drop-shadow(0 3px 3px rgba(0,0,0,0.3));">🏁</div>`,
-        iconSize: [35, 35],
-        iconAnchor: [5, 30], 
+        html: `<img src="img/pin.png" style="width:100%; height:100%; object-fit:contain; filter: drop-shadow(0 5px 5px rgba(0,0,0,0.3));">`,
+        iconSize: [50, 50],
+        iconAnchor: [25, 50], 
+    });
+}
+
+// [YANGI] Manzil tanlash uchun (Finish) ikonka
+function getFinishIcon() {
+    return L.divIcon({
+        className: 'my-custom-pin-finish',
+        // Finish uchun ham o'sha pin.png ishlatiladi, lekin rangi sal boshqacha (hue-rotate) bo'lishi mumkin yoki o'zi qoladi
+        html: `<img src="img/pin.png" style="width:100%; height:100%; object-fit:contain; filter: hue-rotate(200deg) drop-shadow(0 5px 5px rgba(0,0,0,0.3));">`,
+        iconSize: [50, 50],
+        iconAnchor: [25, 50], // Uchi markazda
     });
 }
 
