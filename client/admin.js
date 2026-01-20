@@ -166,6 +166,13 @@ function openPage(pageId) {
     if (pageId === 'info') loadInfo();
     if (pageId === 'calculation_groups') loadCalculationGroups(); // [YANGI]
     if (pageId === 'partners') loadPartners(); // [YANGI]
+
+    // [YANGI] Platforma bo'limlari (Placeholder)
+    if (['sys_users', 'sys_apps', 'sys_teams', 'sys_ai', 'sys_api', 'sys_limits', 'sys_billing', 'sys_invoices', 'sys_activity'].includes(pageId)) {
+        ensurePageSection(pageId, pageId.replace('sys_', '').toUpperCase(), ['Nomi', 'Status', 'Sana', 'Amal']);
+        const tbody = document.getElementById(pageId + '-table');
+        if(tbody) tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#888; padding:20px;">Tez orada ishga tushadi...</td></tr>';
+    }
 }
 
 // ==============================
@@ -993,6 +1000,7 @@ function renderDrivers(list) {
                 <td><b>${(d.balans || 0).toLocaleString()} so'm</b></td> <td>
                     <button class="btn btn-outline" onclick="openBalanceModal('${d._id}', '${d.firstname}', 'driver')" title="Balans">💰</button>
                     <button class="btn btn-primary" onclick="editDriver('${d._id}')">✏️</button>
+                    <button class="btn btn-info" onclick="openHistoryModal('${d.telefon}', '${d.firstname}')" title="Tarix" style="background:#17a2b8; color:white; margin-left:5px;">🕒</button>
                     ${blockBtn}
                 </td>
             </tr>`;
@@ -1067,6 +1075,68 @@ async function submitBalance() {
 }
 
 // ==============================
+// 20. HAYDOVCHI TARIXI (HISTORY) - [YANGI]
+// ==============================
+let historyMap = null;
+let historyPolyline = null;
+
+function openHistoryModal(phone, name) {
+    if (!document.getElementById('historyModal')) {
+        const html = `
+        <div id="historyModal" class="modal">
+            <div class="modal-content" style="width: 90%; height: 90%; display:flex; flex-direction:column;">
+                <div class="modal-header">
+                    <h3>🕒 Harakat Tarixi: <span id="hist-name"></span></h3>
+                    <span class="close-btn" onclick="document.getElementById('historyModal').style.display='none'">&times;</span>
+                </div>
+                <div style="padding: 15px; background: #f9f9f9; display: flex; gap: 10px; align-items: center;">
+                    <input type="date" id="hist-date" class="form-input" style="width: auto;">
+                    <button class="btn btn-primary" onclick="loadDriverHistory()">Ko'rish</button>
+                    <input type="hidden" id="hist-phone">
+                </div>
+                <div id="history-map" style="flex: 1; border: 1px solid #ddd;"></div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+    }
+
+    document.getElementById('historyModal').style.display = 'flex';
+    document.getElementById('hist-name').innerText = name;
+    document.getElementById('hist-phone').value = phone;
+    document.getElementById('hist-date').value = new Date().toISOString().split('T')[0];
+
+    setTimeout(() => {
+        if (!historyMap) {
+            historyMap = L.map('history-map').setView([38.8410, 65.7900], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(historyMap);
+        } else {
+            historyMap.invalidateSize();
+        }
+        // Avtomatik yuklash
+        loadDriverHistory();
+    }, 300);
+}
+
+async function loadDriverHistory() {
+    const phone = document.getElementById('hist-phone').value;
+    const date = document.getElementById('hist-date').value;
+    
+    if (historyPolyline) historyMap.removeLayer(historyPolyline);
+    
+    const res = await fetch(`${API_URL}/admin/driver/history?phone=${phone}&date=${date}`);
+    const locations = await res.json();
+    
+    if (locations.length === 0) {
+        alert("Bu sana uchun ma'lumot yo'q");
+        return;
+    }
+
+    const latlngs = locations.map(l => [l.lat, l.lng]);
+    historyPolyline = L.polyline(latlngs, { color: 'blue', weight: 4 }).addTo(historyMap);
+    historyMap.fitBounds(historyPolyline.getBounds());
+}
+
+// ==============================
 // 10. JONLI XARITA (LIVE MAP)
 // ==============================
 let liveMap = null;
@@ -1077,12 +1147,37 @@ function openLiveMap() {
     if (!document.getElementById('liveMapModal')) {
         const html = `
         <div id="liveMapModal" class="modal">
-            <div class="modal-content" style="width: 95%; height: 90%; display: flex; flex-direction: column;">
-                <div class="modal-header">
-                    <h3>🔴 Jonli Kuzatuv (Real-vaqt)</h3>
-                    <span class="close-btn" onclick="document.getElementById('liveMapModal').style.display='none'">&times;</span>
+            <style>
+                .live-map-layout { display: flex; height: 100%; overflow: hidden; }
+                .live-sidebar { width: 280px; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; z-index: 2; }
+                .live-sidebar-header { padding: 15px; border-bottom: 1px solid #eee; background: #f9f9f9; display: flex; justify-content: space-between; align-items: center; }
+                .live-sidebar-content { flex: 1; overflow-y: auto; padding: 10px; }
+                .live-map-wrapper { flex: 1; position: relative; }
+                .driver-list-item { padding: 12px; background: white; border: 1px solid #eee; border-radius: 8px; margin-bottom: 8px; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: 0.2s; }
+                .driver-list-item:hover { background: #f0faff; border-color: #b3e5fc; }
+                .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; box-shadow: 0 0 5px rgba(0,0,0,0.2); }
+                .car-icon-wrapper { transition: all 0.5s linear; }
+                .car-img-anim { width: 100%; height: 100%; object-fit: contain; transition: transform 0.5s linear; }
+            </style>
+            <div class="modal-content" style="width: 95%; height: 90%; display: flex; flex-direction: column; padding: 0; overflow: hidden;">
+                <div class="modal-header" style="padding: 15px 20px; background: #333; color: white; border-radius: 0;">
+                    <h3 style="margin:0; font-size: 18px;"><i class="fas fa-satellite-dish"></i> Jonli Kuzatuv</h3>
+                    <span class="close-btn" onclick="document.getElementById('liveMapModal').style.display='none'" style="color: white;">&times;</span>
                 </div>
-                <div id="live-map-container" style="flex: 1; border-radius: 8px; border: 1px solid #ddd; background: #eee;"></div>
+                <div class="live-map-layout">
+                    <div class="live-sidebar">
+                        <div class="live-sidebar-header">
+                            <b style="font-size:14px;">Haydovchilar</b>
+                            <button class="btn btn-sm btn-outline" onclick="updateLiveSidebar()" title="Yangilash"><i class="fas fa-sync-alt"></i></button>
+                        </div>
+                        <div class="live-sidebar-content" id="live-drivers-list">
+                            <div style="text-align:center; color:#888; margin-top:20px;">Yuklanmoqda...</div>
+                        </div>
+                    </div>
+                    <div class="live-map-wrapper">
+                        <div id="live-map-container" style="width: 100%; height: 100%;"></div>
+                    </div>
+                </div>
             </div>
         </div>`;
         document.body.insertAdjacentHTML('beforeend', html);
@@ -1097,6 +1192,54 @@ function openLiveMap() {
     } else {
         setTimeout(() => liveMap.invalidateSize(), 300);
     }
+    updateLiveSidebar();
+}
+
+function updateLiveSidebar() {
+    const list = document.getElementById('live-drivers-list');
+    if(!list) return;
+    
+    // Filter online/busy drivers
+    const activeDrivers = loadedDrivers.filter(d => d.status === 'online' || d.status === 'busy');
+    
+    if(activeDrivers.length === 0) {
+        list.innerHTML = '<div style="text-align:center; color:#888; padding:20px;">Aktiv haydovchilar yo\'q</div>';
+        return;
+    }
+    
+    list.innerHTML = '';
+    activeDrivers.forEach(d => {
+        const color = d.status === 'online' ? '#2ecc71' : '#f1c40f';
+        const item = document.createElement('div');
+        item.className = 'driver-list-item';
+        item.innerHTML = `
+            <div class="status-dot" style="background:${color}"></div>
+            <div>
+                <div style="font-weight:bold; font-size:14px;">${d.firstname} ${d.lastname}</div>
+                <div style="font-size:12px; color:#666;">${d.marka} | ${d.raqam}</div>
+            </div>
+        `;
+        item.onclick = () => {
+            if(liveMarkers[d.telefon]) {
+                const m = liveMarkers[d.telefon];
+                liveMap.setView(m.getLatLng(), 17);
+                m.openPopup();
+            } else if (d.lat && d.lng) {
+                liveMap.setView([d.lat, d.lng], 17);
+            }
+        };
+        list.appendChild(item);
+    });
+}
+
+function calculateAngle(lat1, lng1, lat2, lng2) {
+    const dLon = (lng2 - lng1) * Math.PI / 180;
+    const lat1Rad = lat1 * Math.PI / 180;
+    const lat2Rad = lat2 * Math.PI / 180;
+    const y = Math.sin(dLon) * Math.cos(lat2Rad);
+    const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+    const brng = Math.atan2(y, x) * 180 / Math.PI;
+    return (brng + 360) % 360;
 }
 
 if (socket) {
@@ -1104,29 +1247,58 @@ if (socket) {
         if (!liveMap || document.getElementById('liveMapModal').style.display === 'none') return;
         
         const id = data.id || 'unknown';
-        
-        // [YANGI] Haydovchi ma'lumotlarini olish
         const driver = loadedDrivers.find(d => d.telefon === id);
+        
+        // Custom Icon
+        const carIcon = L.divIcon({
+            className: 'car-icon-wrapper',
+            html: '<img src="img/car.png" class="car-img-anim" style="width:100%; height:100%; object-fit: contain;">',
+            iconSize: [40, 40],
+            iconAnchor: [20, 20]
+        });
+
         let content = `<b>Tel:</b> ${id}`;
         
         if (driver) {
             content = `
-                <div style="text-align:center; min-width:140px;">
-                    <h4 style="margin:0 0 5px 0;">${driver.firstname} ${driver.lastname}</h4>
-                    <div style="margin-bottom:5px;">${driver.marka} (${driver.raqam})</div>
-                    <div style="color:green; font-weight:bold;">💰 ${driver.balans.toLocaleString()} so'm</div>
+                <div style="text-align:center; min-width:150px;">
+                    <h4 style="margin:0 0 5px 0; color:#333;">${driver.firstname} ${driver.lastname}</h4>
+                    <div style="margin-bottom:5px; font-size:13px;">${driver.marka} (${driver.raqam})</div>
+                    <div style="color:green; font-weight:bold; font-size:14px;">💰 ${driver.balans.toLocaleString()} so'm</div>
                     <div style="font-size:12px; color:#666; margin-top:5px;">${driver.telefon}</div>
                 </div>
             `;
         }
 
         if (liveMarkers[id]) {
-            liveMarkers[id].setLatLng([data.lat, data.lng]);
-            liveMarkers[id].setPopupContent(content);
+            const marker = liveMarkers[id];
+            const oldPos = marker.getLatLng();
+            const newPos = L.latLng(data.lat, data.lng);
+            
+            // Faqat o'zgargan bo'lsa
+            if (oldPos.lat !== newPos.lat || oldPos.lng !== newPos.lng) {
+                marker.setLatLng(newPos);
+                marker.setPopupContent(content);
+
+                // Rotation
+                if (oldPos.distanceTo(newPos) > 2) {
+                    const angle = calculateAngle(oldPos.lat, oldPos.lng, data.lat, data.lng);
+                    const iconEl = marker.getElement();
+                    if (iconEl) {
+                        const img = iconEl.querySelector('.car-img-anim');
+                        if (img) img.style.transform = `rotate(${angle}deg)`;
+                    }
+                }
+            }
         } else {
-            const m = L.marker([data.lat, data.lng]).addTo(liveMap);
+            const m = L.marker([data.lat, data.lng], {icon: carIcon}).addTo(liveMap);
             m.bindPopup(content);
             liveMarkers[id] = m;
+            // Agar ro'yxatda bo'lmasa, ro'yxatni yangilash (yangi haydovchi online bo'lsa)
+            if(driver && driver.status === 'offline') {
+                driver.status = 'online'; // Lokal yangilash
+                updateLiveSidebar();
+            }
         }
     });
 }
@@ -1268,6 +1440,53 @@ async function loadReports() {
             },
             options: { responsive: true, scales: { y: { beginAtZero: true } } }
         });
+
+        // [YANGI] KUNLIK TOP HAYDOVCHILAR REYTINGI
+        const today = new Date();
+        const dd = String(today.getDate()).padStart(2, '0');
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const todayStr = `${dd}.${mm}`; // Masalan: "25.05"
+
+        const topDrivers = drivers.map(d => {
+            const history = d.daromad_tarixi || [];
+            const entry = history.find(h => h.sana === todayStr);
+            return {
+                name: (d.firstname || '') + ' ' + (d.lastname || ''),
+                phone: d.telefon,
+                car: (d.marka || '') + ' (' + (d.raqam || '') + ')',
+                amount: entry ? entry.summa : 0
+            };
+        })
+        .filter(d => d.amount > 0) // Faqat daromad qilganlar
+        .sort((a, b) => b.amount - a.amount) // Kamayish tartibida
+        .slice(0, 10); // Top 10 talik
+
+        let topContainer = document.getElementById('reports-top-container');
+        if(!topContainer) {
+            topContainer = document.createElement('div');
+            topContainer.id = 'reports-top-container';
+            topContainer.style.marginTop = '30px';
+            document.getElementById('reports').appendChild(topContainer);
+        }
+
+        topContainer.innerHTML = `
+            <div class="card" style="border-top: 4px solid #f1c40f;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                    <h3 style="margin:0; color:#333;"><i class="fas fa-trophy" style="color:#f1c40f; margin-right:10px;"></i> Kunlik Top-10 Haydovchilar</h3>
+                    <span style="color:#777; font-size:12px;">${today.toLocaleDateString()}</span>
+                </div>
+                <table class="table">
+                    <thead><tr><th width="50">#</th><th>Haydovchi</th><th>Telefon</th><th>Avtomobil</th><th style="text-align:right">Daromad</th></tr></thead>
+                    <tbody>
+                        ${topDrivers.length === 0 ? '<tr><td colspan="5" style="text-align:center; color:#999; padding:15px;">Bugun daromad qilganlar yo\'q</td></tr>' : ''}
+                        ${topDrivers.map((d, i) => {
+                            let icon = i===0 ? '🥇 ' : (i===1 ? '🥈 ' : (i===2 ? '🥉 ' : ''));
+                            return `<tr><td style="text-align:center; font-weight:bold;">${icon}${i+1}</td><td><b>${d.name}</b></td><td>${d.phone}</td><td>${d.car}</td><td style="text-align:right; color:green; font-weight:bold;">${d.amount.toLocaleString()} so'm</td></tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
 
         // [YANGI] Batafsil Jadval va Excel Export
         const resDetailed = await fetch(`${API_URL}/admin/reports/detailed`);
