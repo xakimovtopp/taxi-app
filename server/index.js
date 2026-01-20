@@ -274,6 +274,14 @@ const CalculationGroupSchema = new mongoose.Schema({
 });
 const CalculationGroup = mongoose.model('CalculationGroup', CalculationGroupSchema);
 
+// [YANGI] Haydovchi Harakat Tarixi
+const DriverHistorySchema = new mongoose.Schema({
+    driver_phone: String,
+    date: String, // YYYY-MM-DD
+    locations: [{ lat: Number, lng: Number, time: String }]
+});
+const DriverHistory = mongoose.model('DriverHistory', DriverHistorySchema);
+
 // ==========================================
 // 2. SOCKET.IO (YANGI FUNKSIYALAR QO'SHILDI)
 // ==========================================
@@ -454,6 +462,17 @@ io.on('connection', (socket) => {
         io.emit('live_tracking', coords);
         if(coords.id) {
             await Haydovchi.findOneAndUpdate({ telefon: coords.id }, { lat: coords.lat, lng: coords.lng });
+            
+            // [YANGI] Tarixni saqlash
+            try {
+                const today = new Date().toISOString().split('T')[0];
+                const time = new Date().toLocaleTimeString('uz-UZ', {hour12: false});
+                await DriverHistory.updateOne(
+                    { driver_phone: coords.id, date: today },
+                    { $push: { locations: { lat: coords.lat, lng: coords.lng, time: time } } },
+                    { upsert: true }
+                );
+            } catch(e) { console.error("History save error:", e); }
         }
     });
 
@@ -1096,6 +1115,15 @@ app.delete('/api/calculation-groups/:id', async (req, res) => {
         await CalculationGroup.findByIdAndDelete(req.params.id);
         res.json({ success: true });
     } catch(e) { res.status(500).json({ error: "Xatolik" }); }
+});
+
+// [YANGI] Haydovchi tarixi API
+app.get('/api/admin/driver/history', async (req, res) => {
+    const { phone, date } = req.query;
+    try {
+        const history = await DriverHistory.findOne({ driver_phone: phone, date: date });
+        res.json(history ? history.locations : []);
+    } catch(e) { res.status(500).json([]); }
 });
 
 // ==========================================
