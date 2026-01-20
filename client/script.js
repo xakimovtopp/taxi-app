@@ -798,13 +798,54 @@ async function calculatePrice() {
 
             const activePriceEl = document.querySelector('.tariff-card.active .tariff-price');
             if(activePriceEl) {
-                activePriceEl.innerHTML = `
-                    <b>${finalPrice.toLocaleString()} so'm</b>${surgeHtml}
-                    <div style="font-size:9px; color:#555">~${distanceKm.toFixed(1)} km • ${durationMin} daq</div>
-                `;
+                // [YANGI] Narxni animatsiya bilan o'zgartirish
+                const currentB = activePriceEl.querySelector('b');
+                let startVal = 0;
+                if(currentB) startVal = parseInt(currentB.innerText.replace(/\D/g, '')) || 0;
+
+                if(startVal > 0 && startVal !== finalPrice) {
+                    animatePriceChange(activePriceEl, startVal, finalPrice, surgeHtml, distanceKm, durationMin);
+                } else {
+                    activePriceEl.innerHTML = `
+                        <b>${finalPrice.toLocaleString()} so'm</b>${surgeHtml}
+                        <div style="font-size:9px; color:#555">~${distanceKm.toFixed(1)} km • ${durationMin} daq</div>
+                    `;
+                }
             }
         }
     } catch (e) { console.error(e); }
+}
+
+// [YANGI] Narx animatsiyasi funksiyasi
+function animatePriceChange(el, start, end, surgeHtml, dist, dur) {
+    if (el.animationFrameId) cancelAnimationFrame(el.animationFrameId);
+    
+    const duration = 500; 
+    const startTime = performance.now();
+
+    function step(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const ease = 1 - Math.pow(1 - progress, 3); // Cubic ease out
+
+        const val = Math.floor(start + (end - start) * ease);
+        
+        el.innerHTML = `
+            <b>${val.toLocaleString()} so'm</b>${surgeHtml}
+            <div style="font-size:9px; color:#555">~${dist.toFixed(1)} km • ${dur} daq</div>
+        `;
+
+        if (progress < 1) {
+            el.animationFrameId = requestAnimationFrame(step);
+        } else {
+             el.innerHTML = `
+                <b>${end.toLocaleString()} so'm</b>${surgeHtml}
+                <div style="font-size:9px; color:#555">~${dist.toFixed(1)} km • ${dur} daq</div>
+            `;
+            el.animationFrameId = null;
+        }
+    }
+    el.animationFrameId = requestAnimationFrame(step);
 }
 
 // [YANGI] Haydovchi -> Mijoz marshrutini chizish
