@@ -38,6 +38,9 @@ let activeOrderId = null; // Aktiv zakaz ID si
 let stopMarkers = []; // Oraliq bekat markerlari
 let tripStatus = 'yetib_keldi'; // yetib_keldi -> boshlash -> yakunlash
 let availableOrders = []; // Ro'yxatdagi zakazlar
+let currentSpeed = 0; // [YANGI]
+let deviceHeading = 0; // [YANGI]
+let wakeLock = null; // [YANGI] Ekran o'chmasligi uchun (Background mode)
 
 // --- 1. LOGIN ---
 window.loginDriver = async function() {
@@ -65,6 +68,7 @@ window.loginDriver = async function() {
             if(data.activeOrder) {
                 restoreActiveOrder(data.activeOrder);
             }
+            requestWakeLock(); // [YANGI] Ekranni yoqiq saqlash
         } else {
             alert(data.error || "Bunday haydovchi topilmadi!");
         }
@@ -92,6 +96,7 @@ async function checkDriverStatus() {
         if(data.success) {
             loadProfile();
             if(data.activeOrder) restoreActiveOrder(data.activeOrder);
+            requestWakeLock(); // [YANGI]
         }
     } catch(e) { console.error(e); }
 }
@@ -241,6 +246,14 @@ window.toggleStatus = function() {
     
     if(isOn) socket.emit('driver_online', { phone: currentPhone });
     else socket.emit('driver_offline', { phone: currentPhone });
+    
+    // [YANGI] Online bo'lganda ekranni o'chirmaslik (GPS ishlashi uchun)
+    if(isOn) requestWakeLock();
+};
+
+// [YANGI] Ekranni o'chirmaslik funksiyasi
+async function requestWakeLock() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (err) { console.log(err); }
 };
 
 // ==============================
@@ -290,34 +303,61 @@ function openMap() {
             el.className = 'driver-marker';
             driverMarkerEl = new maplibregl.Marker({ element: el }).setLngLat([65.7900, 38.8410]).addTo(map);
         });
+
+        // [YANGI] Gyroscope (Kompas) orqali yo'nalishni aniqlash
+        if (window.DeviceOrientationEvent) {
+            window.addEventListener('deviceorientation', (event) => {
+                let heading = event.alpha;
+                // iOS qurilmalari uchun
+                if (event.webkitCompassHeading) {
+                    heading = event.webkitCompassHeading;
+                } else if (heading != null) {
+                    // Android (alpha teskari bo'lishi mumkin, 360 dan ayiramiz)
+                    heading = 360 - heading;
+                }
+
+                if (heading != null) {
+                    deviceHeading = heading;
+                    // Agar mashina to'xtab turgan bo'lsa (tezlik < 1 m/s), xaritani buramiz
+                    if (map) { // [YANGI] Har doim burilsin (Mijoz talabi: telefoni qayerga qarab tursa)
+                        map.easeTo({
+                            bearing: deviceHeading,
+                            duration: 200, // Silliq o'tish
+                            easing: t => t
+                        });
+                    }
+                }
+            }, true);
+        }
         
         // GPS
         if(navigator.geolocation) {
             navigator.geolocation.watchPosition(pos => {
-                const {latitude, longitude, heading} = pos.coords;
+                const {latitude, longitude, heading, speed} = pos.coords;
                 // Null qiymat tekshiruvi
                 if (latitude == null || longitude == null) return;
                 
+                currentSpeed = speed || 0; // [YANGI] Tezlikni yangilash
                 const coords = [longitude, latitude];
                 
                 if(driverMarkerEl) driverMarkerEl.setLngLat(coords);
                 
                 const switchEl = document.getElementById('driver-status-switch');
-                if(switchEl && switchEl.checked) {
+                if((switchEl && switchEl.checked) || activeOrderId) { // [YANGI] Zakaz paytida ham joylashuvni yuborish
                     socket.emit('driver_location', { id: currentPhone, lat: latitude, lng: longitude });
                 }
                 
+                // [YANGI] Bearingni aniqlash: Tezlik katta bo'lsa GPS, bo'lmasa Gyroscope
+                let finalBearing = (speed > 1 && heading != null) ? heading : (deviceHeading || 0);
+
                 map.easeTo({
                     center: coords,
-                    bearing: heading || 0,
+                    bearing: finalBearing,
                     pitch: 60,
                     zoom: 18,
                     duration: 1000 
                 });
-            }, err => {
-                console.warn("GPS Xatosi:", err.message);
-                // GPS ishlamasa ham xaritani ko'rsatishda davom etamiz
-            }, { enableHighAccuracy: true, maximumAge: 0 });
+            }, err => { console.warn(err); }, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }); // [YANGI] Parametrlar
         }
     }
     setTimeout(() => map.resize(), 300);
@@ -367,6 +407,16 @@ function acceptOrderById(orderId) {
     toggleOrdersList(false);
 }
 
+// [YANGI] Internet uzilib qolsa yoki ilova qayta ochilsa qayta ulanish
+socket.on('connect', () => {
+    if(currentPhone) {
+        // Serverga qaytadan online ekanligini bildirish
+        socket.emit('driver_online', { phone: currentPhone });
+        // Agar aktiv zakaz bo'lsa, xonaga qayta kirish
+        if(activeOrderId) socket.emit('join_chat', activeOrderId);
+    }
+});
+
 socket.on('order_accepted_success', (order) => {
     currentOrder = order;
     activeOrderId = order.id;
@@ -380,6 +430,7 @@ socket.on('order_accepted_success', (order) => {
         
         if(typeof resetActiveSlider === 'function') resetActiveSlider("YETIB KELDIM", "state-yellow", nextStatus);
     }
+    requestWakeLock(); // [YANGI]
     
     if(driverMarkerEl) {
         const dPos = driverMarkerEl.getLngLat();
@@ -420,6 +471,7 @@ function restoreActiveOrder(order) {
             }
         }
     }
+    requestWakeLock(); // [YANGI]
     socket.emit('driver_online', { phone: currentPhone });
 }
 
@@ -837,6 +889,12 @@ document.addEventListener("DOMContentLoaded", () => {
         };
     }
 });
+
+// [YANGI] Ilova ochilganda darhol login ekranini yashirish (Agar oldin kirgan bo'lsa)
+if(localStorage.getItem('d_phone')) {
+    const loginScreen = document.getElementById('screen-login');
+    if(loginScreen) loginScreen.style.display = 'none';
+}
 
 // --- INIT (ENG OXIRIDA) ---
 if(currentPhone) {
