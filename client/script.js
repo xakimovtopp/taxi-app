@@ -32,6 +32,8 @@ var routeLayer = null;
 var driverRouteLayer = null; // [YANGI] Haydovchi kelish yo'li uchun
 var searchTimerInterval; 
 var isPinFixed = false;         
+var isPickingDestination = false; // [YANGI] Manzil tanlash rejimi
+var destinationSelectionMarker = null; // [YANGI] Manzil tanlash markeri
 var currentOrderId = null;      
 
 // --- 1. IKONKALARNI KICHRAYTIRISH (TUZATILDI) ---
@@ -48,23 +50,6 @@ var carIcon = L.divIcon({
 function getStartIcon() {
     return L.divIcon({
         className: 'my-custom-pin',
-        html: `
-        <div style="position: relative; display: flex; justify-content: center;">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" style="filter: drop-shadow(0 3px 3px rgba(0,0,0,0.3));">
-                <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#000000"/>
-                <circle cx="12" cy="9" r="3.5" fill="white"/>
-            </svg>
-            <div style="position: absolute; bottom: 2px; width: 6px; height: 2px; background: rgba(0,0,0,0.5); border-radius: 50%; filter: blur(1px);"></div>
-        </div>`,
-        iconSize: [40, 40], // 50 edi -> 40 qilindi
-        iconAnchor: [20, 38], 
-    });
-}
-
-// Finish Ikonkasi (Kichraytirildi: 35x35)
-function getFinishIcon() {
-    return L.divIcon({
-        className: 'finish-pin',
         html: `<div style="font-size:35px; filter: drop-shadow(0 3px 3px rgba(0,0,0,0.3));">🏁</div>`,
         iconSize: [35, 35],
         iconAnchor: [5, 30], 
@@ -194,19 +179,31 @@ function initMap() {
     userMarker = L.marker(map.getCenter(), {icon: getStartIcon(), zIndexOffset: 1000}).addTo(map);
 
     map.on('move', function() { 
-        if (!isPinFixed) userMarker.setLatLng(map.getCenter());
-    });
+        const center = map.getCenter();
+        if (isPickingDestination) {
+            // Manzil tanlash rejimi
+            if (!destinationSelectionMarker) {
+                destinationSelectionMarker = L.marker(center, {icon: getFinishIcon(), zIndexOffset: 1001}).addTo(map);
+            }
+            destinationSelectionMarker.setLatLng(center);
+        } else {
+            // Oddiy rejim (Mijoz joylashuvi)
+                if (!isPinFixed) userMarker.setLatLng(center);
+            }
+        });
     
     map.on('moveend', function() {
-        if (!isPinFixed) {
-            const center = map.getCenter();
+        const center = map.getCenter();
+        if (isPickingDestination) {
+            // Manzilni aniqlash (Reverse Geocoding)
+            getAddressFromCoords(center.lat, center.lng, 'to');
+        } else if (!isPinFixed) {
             getAddressFromCoords(center.lat, center.lng);
             checkRegion(center.lat, center.lng);
         }
     });
 
     if (navigator.geolocation) {
-        document.getElementById('input-from').value = "Joylashuv aniqlanmoqda...";
         navigator.geolocation.getCurrentPosition(
             (position) => {
                 var lat = position.coords.latitude;
@@ -227,19 +224,21 @@ function initMap() {
     loadOnlineDrivers();
 }
 
-async function getAddressFromCoords(lat, lng) {
-    const inputFrom = document.getElementById('input-from');
+async function getAddressFromCoords(lat, lng, type = 'from') {
+    const inputEl = type === 'to' ? document.getElementById('input-to') : document.getElementById('input-from');
+    if(!inputEl) return;
+    
     try {
         let response = await fetch(`${API_BASE}/api/geocoding?lat=${lat}&lng=${lng}`);
         if (response.ok) {
             let data = await response.json();
             
             if (data.error) {
-                inputFrom.value = "Noma'lum hudud";
+                inputEl.value = "Noma'lum hudud";
                 return;
             }
             
-            let fullAddress = "Noma'lum hudud";
+            let fullAddress = "";
             if (data.address) {
                 const a = data.address;
                 // Ko'proq maydonlarni tekshiramiz
@@ -248,7 +247,7 @@ async function getAddressFromCoords(lat, lng) {
                 fullAddress = data.display_name.split(',')[0];
             }
             
-            inputFrom.value = fullAddress;
+            inputEl.value = fullAddress;
         }
     } catch (e) { console.error(e); }
 }
@@ -263,6 +262,7 @@ async function loadOnlineDrivers() {
                 const id = d.telefon;
                 if (!driversOnMap[id]) {
                     const newMarker = L.marker([d.lat, d.lng], {icon: carIcon}).addTo(map);
+            
                     driversOnMap[id] = newMarker;
                 }
             }
@@ -270,6 +270,63 @@ async function loadOnlineDrivers() {
     } catch (e) { console.error(e); }
 }
 
+// [YANGI] Geolokatsiya tugmasi funksiyasi
+window.locateUser = function() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                if(map) {
+                    map.setView([lat, lng], 17);
+                    if (!isPinFixed && userMarker && !isPickingDestination) {
+                        userMarker.setLatLng([lat, lng]);
+                        getAddressFromCoords(lat, lng);
+                        checkRegion(lat, lng);
+                    }
+                }
+            },
+            (err) => console.error(err),
+            { enableHighAccuracy: true }
+        );
+    } else {
+        alert("Geolokatsiya yoqilmagan");
+    }
+};
+
+// [YANGI] Manzilni xaritadan tanlash
+window.openDestinationPicker = function() {
+    isPickingDestination = true;
+    document.querySelector('.map-bottom-panel').style.display = 'none';
+    document.getElementById('destination-pick-controls').style.display = 'block';
+    
+    // Markazga vaqtinchalik marker qo'yamiz
+    const center = map.getCenter();
+    if(destinationSelectionMarker) map.removeLayer(destinationSelectionMarker);
+    destinationSelectionMarker = L.marker(center, {icon: getFinishIcon(), zIndexOffset: 1001}).addTo(map);
+    
+    // User markerni yashirmaymiz, lekin u qimirlamaydi
+};
+
+window.confirmDestinationPicker = function() {
+    isPickingDestination = false;
+    document.querySelector('.map-bottom-panel').style.display = 'block';
+    document.getElementById('destination-pick-controls').style.display = 'none';
+    
+    if(destinationSelectionMarker) map.removeLayer(destinationSelectionMarker);
+    destinationSelectionMarker = null;
+    
+    calculatePrice(); // Yo'lni hisoblash
+};
+
+window.cancelDestinationPicker = function() {
+    isPickingDestination = false;
+    document.querySelector('.map-bottom-panel').style.display = 'block';
+    document.getElementById('destination-pick-controls').style.display = 'none';
+    if(destinationSelectionMarker) map.removeLayer(destinationSelectionMarker);
+    destinationSelectionMarker = null;
+    document.getElementById('input-to').value = ''; // Tozalash
+};
 
 // ==========================================
 // 4. QIDIRUV VA TARIFLAR
