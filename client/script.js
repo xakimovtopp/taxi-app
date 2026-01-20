@@ -200,6 +200,7 @@ function initMap() {
         } else {
             // Oddiy rejim (Mijoz joylashuvi)
                 if (!isPinFixed) userMarker.setLatLng(center);
+                updateNearestETA(); // [YANGI] ETA ni yangilash
             }
         });
     
@@ -278,6 +279,7 @@ async function loadOnlineDrivers() {
                 }
             }
         });
+        updateNearestETA(); // [YANGI]
     } catch (e) { console.error(e); }
 }
 
@@ -574,6 +576,7 @@ socket.on('live_tracking', function(data) {
         }
 
         animateMarker(marker, data.lat, data.lng, 1000); // [YANGI] Silliq harakat (1 soniya)
+        updateNearestETA(); // [YANGI]
     } else {
         const newMarker = L.marker([data.lat, data.lng], {icon: carIcon}).addTo(map);
         driversOnMap[driverId] = newMarker;
@@ -615,6 +618,36 @@ function animateMarker(marker, newLat, newLng, duration) {
         }
     }
     marker.animationFrameId = requestAnimationFrame(step);
+}
+
+// [YANGI] Eng yaqin mashinagacha vaqtni hisoblash (ETA)
+function updateNearestETA() {
+    if (!userMarker || !map) return;
+    const userPos = userMarker.getLatLng();
+    let minDistance = Infinity;
+    let hasDrivers = false;
+
+    for (let id in driversOnMap) {
+        const marker = driversOnMap[id];
+        const pos = marker.getLatLng();
+        const dist = getDistanceFromLatLonInKm(userPos.lat, userPos.lng, pos.lat, pos.lng);
+        if (dist < minDistance) minDistance = dist;
+        hasDrivers = true;
+    }
+
+    const footer = document.querySelector('.promo-footer');
+    if (!footer) return;
+    
+    const taxiText = (typeof translations !== 'undefined' && translations[currentLang]) ? translations[currentLang].promo_taxi : "Taksi";
+
+    if (!hasDrivers) {
+        footer.innerHTML = `<b data-i18n="promo_taxi">${taxiText}</b> • --`;
+    } else {
+        // 30 km/h o'rtacha tezlik => 1 km = 2 daqiqa + 1 daqiqa podacha
+        let eta = Math.ceil(minDistance * 2) + 1; 
+        if (eta < 2) eta = 2;
+        footer.innerHTML = `<b data-i18n="promo_taxi">${taxiText}</b> • ~${eta} daq`;
+    }
 }
 
 function cancelOrder() {
