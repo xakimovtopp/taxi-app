@@ -29,11 +29,20 @@ app.use(express.static(path.join(__dirname, '../client')));
 // --- ☁️ MONGODB ULANISH ---
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://xakimov:Azizbek8889@cluster0.66sckhd.mongodb.net/taxi-pro?retryWrites=true&w=majority&appName=Cluster0";
 
-let isDbConnected = false; // [YANGI] Baza ulanish holati
-
 mongoose.connect(MONGO_URI)
-    .then(() => { console.log("✅ MONGODB BAZASIGA ULANDI!"); isDbConnected = true; })
+    .then(() => {
+        console.log("✅ MONGODB BAZASIGA ULANDI!");
+        startBackgroundTasks(); // [YANGI] Orqa fon vazifalarini boshlash
+    })
     .catch(err => console.error("❌ Baza xatosi:", err));
+
+// [YANGI] API Middleware: Baza ulanishini tekshirish
+app.use('/api', (req, res, next) => {
+    if (mongoose.connection.readyState !== 1) {
+        return res.status(503).json({ error: "Tizim yuklanmoqda, iltimos kuting..." });
+    }
+    next();
+});
 
 // ==========================================
 // 1. SCHEMALAR (HAMMASI JOIYDA)
@@ -314,7 +323,8 @@ io.on('connection', (socket) => {
                 await order.save();
 
                 // [YANGI QO'SHILGAN QATOR] Haydovchini shu zakaz xonasiga qo'shamiz
-                socket.join("order_" + order.id); 
+                const roomName = "order_" + order.id;
+                socket.join(roomName); 
 
                 socket.emit('order_accepted_success', order);
                 
@@ -322,7 +332,7 @@ io.on('connection', (socket) => {
                 socket.broadcast.emit('remove_order', order.id);
 
                 // MIJOZGA XABAR YUBORISH (driver_found)
-                io.to("order_" + order.id).emit('driver_found', {
+                io.to(roomName).emit('driver_found', {
                     driver: driver ? (driver.firstname + " " + driver.lastname) : "Haydovchi",
                     phone: driver ? driver.telefon : "",
                     car_model: driver ? (driver.marka + " " + driver.model) : "Avtomobil",
@@ -332,6 +342,10 @@ io.on('connection', (socket) => {
                     driverLat: driver ? driver.lat : null,
                     driverLng: driver ? driver.lng : null
                 });
+                
+                // Ehtiyot shart: Agar mijoz xonaga ulanmagan bo'lsa, umumiy kanalga ham yuboramiz (mijoz o'zi filtrlaydi)
+                io.emit('order_status_change_global', { orderId: order.id, status: 'accepted', driverData: { ...driver._doc } });
+
             } else {
                 socket.emit('error_msg', "Bu zakaz allaqachon olingan!");
             }
@@ -471,50 +485,6 @@ io.on('connection', (socket) => {
     socket.on('join_chat', (orderId) => { socket.join("order_" + orderId); });
     socket.on('send_message', (data) => { io.to("order_" + data.orderId).emit('receive_message', data); });
 });
-
-// [YANGI] AVTO-SURGE TEKSHIRUVCHI (Har 5 soniyada)
-setInterval(async () => {
-    if (!isDbConnected) return; // [TUZATISH] Baza ulanmagan bo'lsa kutamiz
-
-    try {
-        const settings = await Settings.findOne({ id: 'global' });
-        if (settings && settings.auto_surge) {
-            // Kutib turgan (yangi) buyurtmalarni sanaymiz
-            const pendingCount = await Buyurtma.countDocuments({ status: 'yangi' });
-            
-            let newActive = false;
-            let newMult = 1.0;
-
-            // Agar kutayotganlar soni chegaradan oshsa -> Narxni oshiramiz
-            if (pendingCount >= settings.surge_threshold) {
-                newActive = true;
-                newMult = settings.surge_target;
-            }
-
-            // Agar holat o'zgargan bo'lsa, bazaga yozamiz va hammaga xabar beramiz
-            if (settings.surge_active !== newActive || settings.surge_multiplier !== newMult) {
-                settings.surge_active = newActive;
-                settings.surge_multiplier = newMult;
-                await settings.save();
-                
-                io.emit('surge_update', { active: newActive, multiplier: newMult });
-                console.log(`🔄 Auto-Surge: ${newActive ? 'ON' : 'OFF'} (Kutayotgan: ${pendingCount})`);
-            }
-
-            // [YANGI] AVTO-HEATMAP LOGIKASI
-            if (settings.auto_heatmap) {
-                const orders = await Buyurtma.find({ status: 'yangi' });
-                const newZones = generateHeatmapZones(orders);
-                
-                // Bazani yangilash va hammaga tarqatish
-                settings.heat_zones = newZones;
-                await settings.save();
-                io.emit('heatmap_update', newZones);
-            }
-
-        }
-    } catch (e) { console.error("Auto Surge Error:", e); }
-}, 5000);
 
 // [YANGI] Heatmap zonalarni hisoblash funksiyasi (Clustering)
 function generateHeatmapZones(orders) {
@@ -1091,6 +1061,24 @@ app.post('/api/login', async (req, res) => {
     res.json({ success: true });
 });
 
+// [YANGI] Promokodlar API
+app.get('/api/promocodes', async (req, res) => res.json(await PromoCode.find()));
+app.post('/api/promocodes', async (req, res) => {
+    await new PromoCode({ id: Date.now(), ...req.body }).save();
+    logAction("Admin", "Promokod qo'shildi", req.body.code);
+    res.json({ success: true });
+});
+app.delete('/api/promocodes/:id', async (req, res) => {
+    await PromoCode.findOneAndDelete({ id: req.params.id });
+    res.json({ success: true });
+});
+app.post('/api/promocodes/validate', async (req, res) => {
+    const { code } = req.body;
+    const promo = await PromoCode.findOne({ code });
+    if (promo) res.json({ success: true, promo });
+    else res.json({ success: false });
+});
+
 // [YANGI] Calculation Groups API (TUZATILDI)
 app.get('/api/calculation-groups', async (req, res) => res.json(await CalculationGroup.find()));
 app.post('/api/calculation-groups', async (req, res) => {
@@ -1157,13 +1145,6 @@ async function createBackup() {
     } catch(e) { console.error("Backup yozishda xatolik:", e); }
 }
 
-// Avtomatik Backup (Har 1 soatda)
-setInterval(async () => {
-    if (!isDbConnected) return; // [TUZATISH]
-
-    try { await createBackup(); } catch(e) { console.error("Auto Backup Error:", e); }
-}, 60 * 60 * 1000);
-
 // [YANGI] Sahifa yo'llari (ROUTES)
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, '../client', 'admin.html')));
 app.get('/driver', (req, res) => res.sendFile(path.join(__dirname, '../client', 'driver.html')));
@@ -1188,3 +1169,46 @@ server.listen(PORT, () => {
         }, interval);
     }
 });
+
+// [YANGI] Orqa fon vazifalari (Baza ulangandan keyin ishlaydi)
+function startBackgroundTasks() {
+    // 1. AVTO-SURGE TEKSHIRUVCHI (Har 5 soniyada)
+    setInterval(async () => {
+        try {
+            const settings = await Settings.findOne({ id: 'global' });
+            if (settings && settings.auto_surge) {
+                const pendingCount = await Buyurtma.countDocuments({ status: 'yangi' });
+                
+                let newActive = false;
+                let newMult = 1.0;
+
+                if (pendingCount >= settings.surge_threshold) {
+                    newActive = true;
+                    newMult = settings.surge_target;
+                }
+
+                if (settings.surge_active !== newActive || settings.surge_multiplier !== newMult) {
+                    settings.surge_active = newActive;
+                    settings.surge_multiplier = newMult;
+                    await settings.save();
+                    
+                    io.emit('surge_update', { active: newActive, multiplier: newMult });
+                    console.log(`🔄 Auto-Surge: ${newActive ? 'ON' : 'OFF'} (Kutayotgan: ${pendingCount})`);
+                }
+
+                if (settings.auto_heatmap) {
+                    const orders = await Buyurtma.find({ status: 'yangi' });
+                    const newZones = generateHeatmapZones(orders);
+                    settings.heat_zones = newZones;
+                    await settings.save();
+                    io.emit('heatmap_update', newZones);
+                }
+            }
+        } catch (e) { console.error("Auto Surge Error:", e); }
+    }, 5000);
+
+    // 2. Avtomatik Backup (Har 1 soatda)
+    setInterval(async () => {
+        try { await createBackup(); } catch(e) { console.error("Auto Backup Error:", e); }
+    }, 60 * 60 * 1000);
+}
