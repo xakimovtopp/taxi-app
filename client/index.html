@@ -166,7 +166,7 @@
         <div id="map"></div>
         
         <button class="back-btn" onclick="goBackToHome()"><i class="fas fa-chevron-left"></i></button>
-        <button class="gps-btn"><i class="fas fa-crosshairs"></i></button>
+        <button class="gps-btn" onclick="locateUser()"><i class="fas fa-crosshairs"></i></button>
 
         <!-- QIDIRUV EKRANI (Overlay) -->
         <div id="screen-searching">
@@ -225,7 +225,8 @@
                 <div class="route-row">
                     <i class="fas fa-flag-checkered"></i> 
                     <div class="search-container">
-                        <input type="text" id="input-to" placeholder="Qayerga?" autocomplete="off" data-i18n="input_to_placeholder">
+                        <input type="text" id="input-to" placeholder="Qayerga?" autocomplete="off" data-i18n="input_to_placeholder" style="padding-right: 40px;">
+                        <i class="fas fa-map-marked-alt map-pick-icon" onclick="openDestinationPicker()"></i>
                         <div id="search-results" class="autocomplete-list"></div>
                     </div>
                     <button class="btn-add-stop" onclick="addStopInput()" title="Manzil qo'shish">+</button>
@@ -254,6 +255,12 @@
                 <button class="btn-order-yellow" onclick="placeOrder()" data-i18n="order_btn">Buyurtma berish</button>
                 <div class="settings-btn" onclick="openOptionsModal()"><i class="fas fa-sliders-h"></i></div>
             </div>
+        </div>
+
+        <!-- [YANGI] Manzilni xaritadan tanlash uchun tugma -->
+        <div id="destination-pick-controls" style="display: none; position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; width: 90%;">
+            <button class="btn-yellow" onclick="confirmDestinationPicker()">Manzilni tasdiqlash</button>
+            <button class="btn-cancel-search" onclick="cancelDestinationPicker()" style="margin-top: 10px; width: 100%; padding: 15px; border-radius: 12px; border: none; font-weight: bold;">Bekor qilish</button>
         </div>
 
         <div id="driver-panel" class="driver-bottom-panel" style="display: none;">
