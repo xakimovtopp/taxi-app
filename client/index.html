@@ -250,6 +250,12 @@
                 <span id="promo-status"></span>
             </div>
 
+            <!-- [YANGI] Vaqt tanlash -->
+            <div class="promo-row" id="schedule-row" style="display:none; margin-top:5px;">
+                <i class="fas fa-clock" style="color:#2980b9"></i>
+                <input type="datetime-local" id="order-schedule-time" style="border:none; outline:none; width:100%; font-family:inherit;">
+            </div>
+
             <div class="order-footer">
                 <div class="payment-method" onclick="openPaymentModal()"><i class="fas fa-money-bill-wave" id="footer-payment-icon"></i></div>
                 <button class="btn-order-yellow" onclick="placeOrder()" data-i18n="order_btn">Buyurtma berish</button>
@@ -361,6 +367,10 @@
             <div class="option-row">
                 <span><i class="fas fa-suitcase"></i> <span data-i18n="option_luggage">Bo'sh yukxona</span></span>
                 <label class="switch-sm"><input type="checkbox" id="opt-luggage"><span class="slider-sm round"></span></label>
+            </div>
+            <div class="option-row" style="margin-top:15px; border-top:1px solid #eee; padding-top:15px;">
+                <span><i class="fas fa-history"></i> Oldindan buyurtma</span>
+                <label class="switch-sm"><input type="checkbox" id="opt-schedule" onchange="toggleScheduleInput()"><span class="slider-sm round"></span></label>
             </div>
             <button class="btn-yellow" style="margin-top: 20px;" onclick="closeOptionsModal()" data-i18n="save_btn">Saqlash</button>
         </div>
