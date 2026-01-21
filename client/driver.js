@@ -416,6 +416,7 @@ socket.on('yangi_buyurtma', (order) => {
     playNotificationSound();
     
     if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
+    requestWakeLock(); // [YANGI] Yangi buyurtma kelganda ekranni yoqish
 });
 
 function acceptOrderById(orderId) {
