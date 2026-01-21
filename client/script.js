@@ -112,15 +112,18 @@ async function goToHome() {
 
         // 2. Agar kod kerak bo'lsa
         if (data.requireOtp) {
-            const code = prompt(`SMS orqali yuborilgan 4 xonali kodni kiriting:\n(${fullPhone})`);
-            if (!code) return;
-
-            res = await fetch(`${API_BASE}/api/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: fullPhone, code: code })
-            });
-            data = await res.json();
+            // [YANGI] Tekshirish funksiyasini yuboramiz
+            const verifyCallback = async (code) => {
+                const r = await fetch(`${API_BASE}/api/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: fullPhone, code: code })
+                });
+                return await r.json();
+            };
+            
+            data = await requestOtpInput(fullPhone, verifyCallback);
+            if (!data) return;
         }
 
         if (data.success) {
@@ -1387,3 +1390,78 @@ window.removeFavorite = function(index) {
         loadFavorites();
     }
 };
+
+// [YANGI] SMS Kod kiritish oynasi (Mijoz uchun)
+function injectOtpModal() {
+    if (document.getElementById('otp-modal')) return;
+    const html = `
+    <div id="otp-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
+        <div style="background:white; padding:25px; border-radius:20px; width:85%; max-width:320px; text-align:center; box-shadow:0 10px 25px rgba(0,0,0,0.2); animation: popIn 0.3s ease;">
+            <div style="width:60px; height:60px; background:#f3f4f6; border-radius:50%; margin:0 auto 15px; display:flex; align-items:center; justify-content:center; font-size:24px; color:#333;">
+                <i class="fas fa-sms"></i>
+            </div>
+            <h3 style="margin:0 0 10px 0; font-size:18px;">Tasdiqlash</h3>
+            <p id="otp-phone-display" style="color:#666; font-size:14px; margin-bottom:20px;">Kod yuborildi</p>
+            <div style="display:flex; justify-content:center; gap:10px; margin-bottom:20px;">
+                <input type="tel" id="otp-input" maxlength="4" placeholder="0000" style="width:100%; padding:15px; font-size:24px; text-align:center; border:2px solid #eee; border-radius:12px; outline:none; font-weight:bold; letter-spacing:5px;">
+            </div>
+            <button id="btn-verify-otp" style="width:100%; padding:14px; background:#FFD600; border:none; border-radius:12px; font-weight:bold; font-size:16px; cursor:pointer; box-shadow: 0 4px 10px rgba(255, 214, 0, 0.3);">Tasdiqlash</button>
+            <div style="margin-top:15px; font-size:13px; color:#999; cursor:pointer;" onclick="location.reload()">Bekor qilish</div>
+        </div>
+    </div>
+    <style>@keyframes popIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }</style>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function requestOtpInput(phone, verifyCallback) {
+    return new Promise((resolve) => {
+        injectOtpModal();
+        const modal = document.getElementById('otp-modal');
+        const input = document.getElementById('otp-input');
+        const btn = document.getElementById('btn-verify-otp');
+        const phoneDisplay = document.getElementById('otp-phone-display');
+        
+        if(phoneDisplay) {
+            phoneDisplay.innerText = `${phone} raqamiga kod yuborildi`;
+            phoneDisplay.style.color = '#666';
+        }
+        input.value = ''; 
+        input.style.borderColor = '#eee';
+        
+        modal.style.display = 'flex';
+        input.focus();
+        
+        const onSubmit = async () => {
+            const code = input.value;
+            if(code.length >= 4) {
+                const oldText = btn.innerText;
+                btn.innerText = "Tekshirilmoqda...";
+                btn.disabled = true;
+                try {
+                    const res = await verifyCallback(code);
+                    if(res.success) {
+                        modal.style.display = 'none';
+                        resolve(res);
+                    } else {
+                        input.style.borderColor = 'red';
+                        input.value = '';
+                        if(phoneDisplay) {
+                            phoneDisplay.innerText = res.error || "Kod noto'g'ri!";
+                            phoneDisplay.style.color = 'red';
+                        }
+                        input.focus();
+                    }
+                } catch(e) { alert("Xatolik!"); }
+                finally { btn.innerText = oldText; btn.disabled = false; }
+            } else { 
+                input.style.borderColor = 'red'; 
+            }
+        };
+        
+        input.onkeyup = (e) => { 
+            input.style.borderColor = '#eee';
+            if(e.key === 'Enter') onSubmit(); 
+        };
+        btn.onclick = onSubmit;
+    });
+}
