@@ -51,6 +51,16 @@ app.use('/api', (req, res, next) => {
 const otpStore = {}; // Vaqtincha kodlarni saqlash
 let smppSession;
 
+// [YANGI] SMS Log Schema
+const SmsLogSchema = new mongoose.Schema({
+    phone: String,
+    message: String,
+    status: String, // 'sent', 'failed'
+    error: String,
+    date: { type: Date, default: Date.now }
+});
+const SmsLog = mongoose.model('SmsLog', SmsLogSchema);
+
 function connectSMPP() {
     smppSession = new smpp.Session({host: '213.230.96.207', port: 2775});
     smppSession.on('connect', () => {
@@ -71,7 +81,10 @@ function connectSMPP() {
 connectSMPP();
 
 function sendSMS(phone, text) {
-    if (!smppSession) return console.error("SMPP sessiyasi yo'q!");
+    if (!smppSession) {
+        try { new SmsLog({ phone, message: text, status: 'failed', error: "SMPP sessiyasi yo'q" }).save(); } catch(e){}
+        return console.error("SMPP sessiyasi yo'q!");
+    }
     
     smppSession.submit_sm({
         source_addr: '+998939001069',
@@ -82,8 +95,13 @@ function sendSMS(phone, text) {
         dest_addr_ton: 0, // UNKNOWN
         dest_addr_npi: 1, // ISDN
     }, (pdu) => {
-        if (pdu.command_status === 0) console.log(`📩 SMS yuborildi: ${phone}`);
-        else console.error(`❌ SMS xatosi: ${pdu.command_status}`);
+        if (pdu.command_status === 0) {
+            console.log(`📩 SMS yuborildi: ${phone}`);
+            try { new SmsLog({ phone, message: text, status: 'sent' }).save(); } catch(e){}
+        } else {
+            console.error(`❌ SMS xatosi: ${pdu.command_status}`);
+            try { new SmsLog({ phone, message: text, status: 'failed', error: `Code: ${pdu.command_status}` }).save(); } catch(e){}
+        }
     });
 }
 
@@ -1050,6 +1068,14 @@ app.get('/api/admin/reports/detailed', async (req, res) => {
 // [YANGI] Loglarni olish API
 app.get('/api/admin/logs', async (req, res) => res.json(await Log.find().sort({_id:-1}).limit(200)));
 
+// [YANGI] SMS Loglarini olish API
+app.get('/api/admin/sms-logs', async (req, res) => {
+    try {
+        const logs = await SmsLog.find().sort({ date: -1 }).limit(200);
+        res.json(logs);
+    } catch(e) { res.status(500).json({ error: "Xatolik" }); }
+});
+
 // [YANGI] Backuplarni boshqarish API (MongoDB JSON Dump)
 const BACKUP_DIR = path.join(__dirname, '../backups');
 if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR);
@@ -1152,6 +1178,26 @@ app.post('/api/login', async (req, res) => {
     otpStore[phone] = generatedCode;
     sendSMS(phone, `Taxi Pro: Tasdiqlash kodi: ${generatedCode}`);
     res.json({ success: false, requireOtp: true });
+});
+
+// [YANGI] SMPP Test API
+app.post('/api/test/sms', (req, res) => {
+    const { phone, message } = req.body;
+    if (!phone) return res.status(400).json({ error: "Telefon raqam kiritilmadi" });
+    if (!smppSession) return res.status(500).json({ error: "SMPP serverga ulanmagan" });
+
+    smppSession.submit_sm({
+        source_addr: '+998939001069',
+        destination_addr: phone,
+        short_message: message || "Taxi Pro: Test SMS",
+        source_addr_ton: 0,
+        source_addr_npi: 1,
+        dest_addr_ton: 0,
+        dest_addr_npi: 1,
+    }, (pdu) => {
+        if (pdu.command_status === 0) res.json({ success: true, message: "SMS muvaffaqiyatli yuborildi" });
+        else res.status(500).json({ success: false, error: "SMS yuborishda xatolik", code: pdu.command_status });
+    });
 });
 
 // [YANGI] Promokodlar API
