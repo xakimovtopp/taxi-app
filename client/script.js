@@ -102,19 +102,38 @@ async function goToHome() {
     localStorage.setItem('client_phone', fullPhone);
 
     try {
-        await fetch(`${API_BASE}/api/login`, {
+        // 1. Login so'rovi (Kod so'rash)
+        let res = await fetch(`${API_BASE}/api/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ phone: fullPhone })
         });
-    } catch (error) { console.error("Login xatosi:", error); }
+        let data = await res.json();
 
-    document.getElementById('screen-login').classList.remove('active');
-    document.getElementById('screen-home').classList.add('active');
-    loadSettings();
-    loadSystemData();
-    loadMyAddresses(); // [YANGI]
-    loadFavorites(); // [YANGI]
+        // 2. Agar kod kerak bo'lsa
+        if (data.requireOtp) {
+            const code = prompt(`SMS orqali yuborilgan 4 xonali kodni kiriting:\n(${fullPhone})`);
+            if (!code) return;
+
+            res = await fetch(`${API_BASE}/api/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: fullPhone, code: code })
+            });
+            data = await res.json();
+        }
+
+        if (data.success) {
+            document.getElementById('screen-login').classList.remove('active');
+            document.getElementById('screen-home').classList.add('active');
+            loadSettings();
+            loadSystemData();
+            loadMyAddresses();
+            loadFavorites();
+        } else {
+            alert(data.error || "Xatolik yuz berdi");
+        }
+    } catch (error) { console.error("Login xatosi:", error); alert("Server xatosi"); }
 }
 
 function goToMap(locationName) {
@@ -353,8 +372,17 @@ async function loadSavedAddresses() {
     } catch (err) { console.error(err); }
 }
 
+// [YANGI] Debounce funksiyasi (Serverni yuklamaslik uchun)
+function debounce(func, timeout = 500){
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { func.apply(this, args); }, timeout);
+  };
+}
+
 var inputTo = document.getElementById('input-to');
-if (inputTo) inputTo.addEventListener('input', function() {
+if (inputTo) inputTo.addEventListener('input', debounce(function() {
     const val = this.value.toLowerCase();
     const list = document.getElementById('search-results');
     list.innerHTML = '';
@@ -379,7 +407,7 @@ if (inputTo) inputTo.addEventListener('input', function() {
             list.appendChild(div);
         });
     } else { list.style.display = 'none'; }
-});
+}, 500)); // 500ms kutib keyin qidiradi
 
 
 document.addEventListener('click', function(e) {
