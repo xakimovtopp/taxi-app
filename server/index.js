@@ -6,6 +6,7 @@ const path = require('path');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const fs = require('fs'); // [YANGI] Fayllar bilan ishlash uchun
+const smpp = require('smpp'); // [YANGI] SMS yuborish uchun
 
 const app = express();
 const server = http.createServer(app);
@@ -43,6 +44,48 @@ app.use('/api', (req, res, next) => {
     }
     next();
 });
+
+// ==========================================
+// [YANGI] SMS SERVER (SMPP) SOZLAMALARI
+// ==========================================
+const otpStore = {}; // Vaqtincha kodlarni saqlash
+let smppSession;
+
+function connectSMPP() {
+    smppSession = new smpp.Session({host: '213.230.96.207', port: 2775});
+    smppSession.on('connect', () => {
+        smppSession.bind_transceiver({
+            system_id: 'admin',
+            password: '123456'
+        }, (pdu) => {
+            if (pdu.command_status === 0) console.log('✅ SMPP (SMS) Serverga ulandi!');
+            else console.error('❌ SMPP Ulanish xatosi:', pdu.command_status);
+        });
+    });
+    smppSession.on('close', () => {
+        console.log('⚠️ SMPP Uzildi. 5 soniyadan keyin qayta ulanadi...');
+        setTimeout(connectSMPP, 5000);
+    });
+    smppSession.on('error', (err) => console.error('SMPP Error:', err));
+}
+connectSMPP();
+
+function sendSMS(phone, text) {
+    if (!smppSession) return console.error("SMPP sessiyasi yo'q!");
+    
+    smppSession.submit_sm({
+        source_addr: '+998939001069',
+        destination_addr: phone,
+        short_message: text,
+        source_addr_ton: 0, // UNKNOWN
+        source_addr_npi: 1, // ISDN
+        dest_addr_ton: 0, // UNKNOWN
+        dest_addr_npi: 1, // ISDN
+    }, (pdu) => {
+        if (pdu.command_status === 0) console.log(`📩 SMS yuborildi: ${phone}`);
+        else console.error(`❌ SMS xatosi: ${pdu.command_status}`);
+    });
+}
 
 // ==========================================
 // 1. SCHEMALAR (HAMMASI JOIYDA)
@@ -824,16 +867,33 @@ app.post('/api/drivers', async (req, res) => {
     } catch(e) { res.status(500).json({ error: "Xatolik" }); }
 });
 app.post('/api/driver/login', async (req, res) => {
-    const driver = await Haydovchi.findOne({ telefon: req.body.phone });
+    const { phone, code } = req.body;
+    const driver = await Haydovchi.findOne({ telefon: phone });
+    
     if(driver) {
         if (driver.status === 'blocked') return res.json({ success: false, error: "Siz bloklangansiz! Admin bilan bog'laning." });
-        const activeOrder = await Buyurtma.findOne({ 
-            haydovchi_phone: driver.telefon, 
-            status: { $in: ['accepted', 'arrived', 'started'] } 
-        });
-        res.json({ success: true, driver, activeOrder });
+        
+        // [YANGI] Kodni tekshirish
+        if (code) {
+            if (otpStore[phone] == code || code === '7777') { // 7777 - Test uchun
+                delete otpStore[phone];
+                const activeOrder = await Buyurtma.findOne({ 
+                    haydovchi_phone: driver.telefon, 
+                    status: { $in: ['accepted', 'arrived', 'started'] } 
+                });
+                return res.json({ success: true, driver, activeOrder });
+            } else {
+                return res.json({ success: false, error: "Tasdiqlash kodi noto'g'ri!" });
+            }
+        } else {
+            // Kod yuborish
+            const generatedCode = Math.floor(1000 + Math.random() * 9000);
+            otpStore[phone] = generatedCode;
+            sendSMS(phone, `Taxi Pro: Sizning kodingiz: ${generatedCode}`);
+            return res.json({ success: false, requireOtp: true });
+        }
     } else {
-        res.json({ success: false });
+        res.json({ success: false, error: "Bunday haydovchi topilmadi" });
     }
 });
 app.get('/api/driver/profile', async (req, res) => {
@@ -1068,16 +1128,30 @@ app.get('/api/client/orders', async (req, res) => {
 
 // [YANGI] Mijoz Login (server.js dan ko'chirildi)
 app.post('/api/login', async (req, res) => {
-    const { phone } = req.body;
+    const { phone, code } = req.body;
     if (!phone) return res.status(400).json({ message: "Raqam yo'q" });
 
-    let user = await Mijoz.findOne({ phone });
-    if (!user) {
-        user = new Mijoz({ id: Date.now(), phone: phone, date: new Date().toLocaleString("uz-UZ", { timeZone: "Asia/Tashkent" }) });
-        await user.save();
+    // [YANGI] Kodni tekshirish
+    if (code) {
+        if (otpStore[phone] == code || code === '7777') {
+            delete otpStore[phone];
+            let user = await Mijoz.findOne({ phone });
+            if (!user) {
+                user = new Mijoz({ id: Date.now(), phone: phone, date: new Date().toLocaleString("uz-UZ", { timeZone: "Asia/Tashkent" }) });
+                await user.save();
+            }
+            console.log("Mijoz kirdi:", phone);
+            return res.json({ success: true });
+        } else {
+            return res.json({ success: false, error: "Kod noto'g'ri!" });
+        }
     }
-    console.log("Mijoz kirdi:", phone);
-    res.json({ success: true });
+
+    // Kod yuborish
+    const generatedCode = Math.floor(1000 + Math.random() * 9000);
+    otpStore[phone] = generatedCode;
+    sendSMS(phone, `Taxi Pro: Tasdiqlash kodi: ${generatedCode}`);
+    res.json({ success: false, requireOtp: true });
 });
 
 // [YANGI] Promokodlar API
