@@ -440,6 +440,14 @@ async function placeOrder() {
     if (activeCard) calcPrice = activeCard.innerText;
 
     let fLat = 0, fLng = 0, tLat = 0, tLng = 0;
+    
+    // [YANGI] Vaqtni olish
+    let scheduledTime = null;
+    const scheduleInput = document.getElementById('order-schedule-time');
+    if(document.getElementById('schedule-row').style.display !== 'none' && scheduleInput.value) {
+        scheduledTime = scheduleInput.value;
+    }
+
     if (userMarker) {
         const pos = userMarker.getLatLng();
         fLat = pos.lat; fLng = pos.lng;
@@ -456,7 +464,8 @@ async function placeOrder() {
         fromLat: fLat, fromLng: fLng,
         toLat: tLat, toLng: tLng,
         comment: currentTariff,
-        narx: calcPrice 
+        narx: calcPrice,
+        scheduledTime: scheduledTime // [YANGI]
     };
 
     document.getElementById('screen-searching').classList.add('active');
@@ -484,6 +493,11 @@ async function placeOrder() {
 
         const data = await res.json();
         if(data.success && data.order) {
+            if (data.order.status === 'scheduled') {
+                alert(`Buyurtma qabul qilindi!\nVaqt: ${data.order.vaqt}`);
+                cancelSearch(); // Qidiruvni to'xtatamiz, chunki bu rejali
+                return;
+            }
             currentOrderId = data.order.id;
             socket.emit('join_chat', currentOrderId); // Xonaga ulanish
         } else {
@@ -1272,6 +1286,13 @@ function closeOptionsModal() {
     selectedOptions.luggage = document.getElementById('opt-luggage').checked;
     document.getElementById('optionsModal').classList.remove('active'); 
 }
+
+// [YANGI] Vaqt tanlashni ko'rsatish/yashirish
+window.toggleScheduleInput = function() {
+    const isChecked = document.getElementById('opt-schedule').checked;
+    document.getElementById('schedule-row').style.display = isChecked ? 'flex' : 'none';
+    if(!isChecked) document.getElementById('order-schedule-time').value = '';
+};
 
 // RATING
 var ratingValue = 0;
