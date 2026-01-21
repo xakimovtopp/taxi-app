@@ -98,8 +98,8 @@ async function goToHome() {
     if (cleanNum.length !== 9) { alert("Raqam noto'g'ri!"); return; }
 
     const fullPhone = "+998" + cleanNum;
-    currentUserPhone = fullPhone;
-    localStorage.setItem('client_phone', fullPhone);
+    // currentUserPhone va localStorage ni bu yerda saqlamaymiz
+    // Faqat muvaffaqiyatli bo'lsa saqlaymiz
 
     try {
         // 1. Login so'rovi (Kod so'rash)
@@ -127,6 +127,9 @@ async function goToHome() {
         }
 
         if (data.success) {
+            currentUserPhone = fullPhone; // [YANGI]
+            localStorage.setItem('client_phone', fullPhone); // [YANGI] Muvaffaqiyatli bo'lsa saqlash
+            
             document.getElementById('screen-login').classList.remove('active');
             document.getElementById('screen-home').classList.add('active');
             loadSettings();
