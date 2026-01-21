@@ -909,36 +909,6 @@ app.post('/api/drivers', async (req, res) => {
         res.json({ success: true }); 
     } catch(e) { res.status(500).json({ error: "Xatolik" }); }
 });
-app.post('/api/driver/login', loginLimiter, async (req, res) => { // [YANGI] Limiter qo'shildi
-    const { phone, code } = req.body;
-    const driver = await Haydovchi.findOne({ telefon: phone });
-    
-    if(driver) {
-        if (driver.status === 'blocked') return res.json({ success: false, error: "Siz bloklangansiz! Admin bilan bog'laning." });
-        
-        // [YANGI] Kodni tekshirish
-        if (code) {
-            if (otpStore[phone] == code || code === '7777') { // 7777 - Test uchun
-                delete otpStore[phone];
-                const activeOrder = await Buyurtma.findOne({ 
-                    haydovchi_phone: driver.telefon, 
-                    status: { $in: ['accepted', 'arrived', 'started'] } 
-                });
-                return res.json({ success: true, driver, activeOrder });
-            } else {
-                return res.json({ success: false, error: "Tasdiqlash kodi noto'g'ri!" });
-            }
-        } else {
-            // Kod yuborish
-            const generatedCode = Math.floor(1000 + Math.random() * 9000);
-            otpStore[phone] = generatedCode;
-            sendSMS(phone, `Taxi Pro: Sizning kodingiz: ${generatedCode}`);
-            return res.json({ success: false, requireOtp: true });
-        }
-    } else {
-        res.json({ success: false, error: "Bunday haydovchi topilmadi" });
-    }
-});
 app.get('/api/driver/profile', async (req, res) => {
     const driver = await Haydovchi.findOne({ telefon: req.query.phone });
     res.json(driver || { error: 'Not found' });
