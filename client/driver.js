@@ -171,6 +171,9 @@ function renderDriverDashboard(driver, orders) {
                 <div>
                     <div style="font-size:12px; color:#888;">Balans</div>
                     <div style="font-size:20px; font-weight:800;">${fmt(driver.balans)}</div>
+                    <div style="margin-top:5px; color:#10b981; font-size:13px; font-weight:600; cursor:pointer;" onclick="openPaymeModal()">
+                        <i class="fas fa-plus-circle"></i> To'ldirish
+                    </div>
                 </div>
                 <div style="text-align:right;">
                     <label class="switch">
@@ -237,6 +240,7 @@ function renderDriverDashboard(driver, orders) {
                         <div style="font-size:13px; color:#555; margin-bottom:3px;"><i class="fas fa-map-marker-alt"></i> ${o.qayerdan}</div>
                         <div style="font-size:13px; color:#555;"><i class="fas fa-flag-checkered"></i> ${o.qayerga}</div>
                         <div style="text-align:right; font-size:11px; color:#999; margin-top:5px;">${new Date(o.id).toLocaleString()}</div>
+                        <button onclick="viewOrderRoute('${o.id}')" style="width:100%; margin-top:10px; padding:8px; background:#e0f2f1; color:#00695c; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">🗺 Yo'lni ko'rish</button>
                     </div>
                     `;
                 }).join('')}
@@ -292,7 +296,7 @@ function openMap() {
             style: styleUrl,
             center: [65.7900, 38.8410],
             zoom: 17,
-            pitch: 60, 
+            pitch: 0, // [YANGI] 2D rejim (Tepadan ko'rinish)
             bearing: 0
         });
 
@@ -303,6 +307,7 @@ function openMap() {
         });
 
         map.on('load', () => {
+            /* [YANGI] 2D rejimda 3D binolar kerak emas, shuning uchun o'chirib qo'yamiz
             // 3D Binolar
             const sourceId = map.getSource('openmaptiles') ? 'openmaptiles' : 'openfreemap';
             if (!map.getLayer('3d-buildings') && map.getSource(sourceId)) {
@@ -317,6 +322,7 @@ function openMap() {
                     }
                 });
             }
+            */
 
             const el = document.createElement('div');
             el.innerHTML = `<svg width="60" height="60" viewBox="0 0 100 100" style="filter: drop-shadow(0 5px 5px rgba(0,0,0,0.3));"><path d="M50 5 L10 85 L50 65 Z" fill="#F4D03F" stroke="white" stroke-width="2"/><path d="M50 5 L90 85 L50 65 Z" fill="#D4AC0D" stroke="white" stroke-width="2"/></svg>`;
@@ -373,7 +379,7 @@ function openMap() {
                 map.easeTo({
                     center: coords,
                     bearing: finalBearing,
-                    pitch: 60,
+                    pitch: 0, // [YANGI] Harakatlanayotganda ham 2D saqlanadi
                     zoom: 18,
                     duration: 1000 
                 });
@@ -886,7 +892,7 @@ window.toggleOfflineMode = function() {
     socket.emit('driver_offline', { phone: currentPhone }); 
 };
 window.resetCamera = function() { 
-    if(map) map.easeTo({ pitch: 60, bearing: 0, zoom: 17 }); 
+    if(map) map.easeTo({ pitch: 0, bearing: 0, zoom: 17 }); 
 };
 // window.openHistory = openHistory; // [TUZATISH] Bu qator xato berayotgan edi (funksiya yo'q). O'chiramiz.
 window.closeDashboard = function() {
@@ -1195,3 +1201,139 @@ function requestDriverOtpInput(phone, verifyCallback) {
         btn.onclick = onSubmit;
     });
 }
+
+// [YANGI] Payme orqali hisob to'ldirish
+window.openPaymeModal = function() {
+    if (document.getElementById('payme-modal')) return;
+    const html = `
+    <div id="payme-modal" style="display:flex; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
+        <div style="background:white; padding:25px; border-radius:20px; width:85%; max-width:320px; text-align:center; box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+            <div style="width:60px; height:60px; background:#e0f2f1; border-radius:50%; margin:0 auto 15px; display:flex; align-items:center; justify-content:center; font-size:24px; color:#00CCCC;">
+                <i class="fas fa-wallet"></i>
+            </div>
+            <h3 style="margin:0 0 10px 0;">Hisobni to'ldirish</h3>
+            <p style="color:#666; font-size:14px; margin-bottom:20px;">Payme orqali onlayn to'lov</p>
+            <input type="number" id="payme-amount" placeholder="Summa (so'm)" style="width:100%; padding:12px; border:1px solid #ddd; border-radius:10px; margin-bottom:15px; font-size:18px; text-align:center; outline:none;">
+            <button onclick="processPaymePayment()" style="width:100%; padding:12px; background:#00CCCC; color:white; border:none; border-radius:10px; font-weight:bold; font-size:16px; cursor:pointer;">To'lash</button>
+            <div style="margin-top:15px; font-size:13px; color:#999; cursor:pointer;" onclick="document.getElementById('payme-modal').remove()">Bekor qilish</div>
+        </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+    setTimeout(() => document.getElementById('payme-amount').focus(), 100);
+};
+
+window.processPaymePayment = function() {
+    const amount = document.getElementById('payme-amount').value;
+    if(!amount || amount < 1000) return alert("Minimal summa 1000 so'm");
+    
+    // Payme URL generatsiyasi
+    // DIQQAT: Bu yerda o'zingizning Merchant ID raqamingizni yozishingiz kerak
+    const merchantId = "YOUR_MERCHANT_ID"; 
+    const driverId = currentPhone.replace(/\D/g, ''); // Faqat raqamlar
+    const amountTiyin = amount * 100;
+    
+    // Payme Checkout URL formati: m=MERCHANT_ID;ac.driver_id=ID;a=AMOUNT
+    const params = `m=${merchantId};ac.driver_id=${driverId};a=${amountTiyin}`;
+    const encoded = btoa(params);
+    const url = `https://checkout.paycom.uz/${encoded}`;
+    
+    // Haqiqiy loyihada quyidagi qatorni ochib qo'yasiz:
+    window.open(url, '_blank');
+    document.getElementById('payme-modal').remove();
+};
+
+// [YANGI] Buyurtma yo'lini ko'rish funksiyasi
+window.viewOrderRoute = async function(orderId) {
+    // Modalni yaratish
+    if (!document.getElementById('route-view-modal')) {
+        const html = `
+        <div id="route-view-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:white; z-index:4000; flex-direction:column;">
+            <div style="padding:15px; background:#fff; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; box-shadow:0 2px 5px rgba(0,0,0,0.1); z-index:10;">
+                <h3 style="margin:0; font-size:16px;">Sayohat Hisoboti</h3>
+                <button onclick="document.getElementById('route-view-modal').style.display='none'" style="background:none; border:none; font-size:24px;">&times;</button>
+            </div>
+            <div id="route-map" style="flex:1; width:100%;"></div>
+            <div id="route-stats" style="padding:15px; background:#f9f9f9; border-top:1px solid #eee; max-height:30%; overflow-y:auto;">
+                Yuklanmoqda...
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+    }
+    
+    const modal = document.getElementById('route-view-modal');
+    modal.style.display = 'flex';
+    document.getElementById('route-stats').innerHTML = 'Yuklanmoqda...';
+
+    // Xaritani ishga tushirish
+    let routeMap;
+    if (!window.routeViewMap) {
+        window.routeViewMap = L.map('route-map').setView([38.8410, 65.7900], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(window.routeViewMap);
+    }
+    routeMap = window.routeViewMap;
+    
+    // Eski chiziqlarni tozalash
+    routeMap.eachLayer(layer => {
+        if (layer instanceof L.Polyline || layer instanceof L.Marker) routeMap.removeLayer(layer);
+    });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(routeMap); // Tile qayta qo'shish
+
+    try {
+        const res = await fetch(`${API_BASE}/api/driver/order-route/${orderId}`);
+        const data = await res.json();
+
+        if (data.error) {
+            document.getElementById('route-stats').innerHTML = `<div style="color:red; text-align:center;">${data.error}</div>`;
+            return;
+        }
+
+        // Chiziqlarni chizish
+        const pickupLatLngs = data.pickup.map(l => [l.lat, l.lng]);
+        const tripLatLngs = data.trip.map(l => [l.lat, l.lng]);
+
+        if (pickupLatLngs.length > 0) {
+            L.polyline(pickupLatLngs, { color: 'blue', weight: 4, dashArray: '10, 10' }).addTo(routeMap); // Pickup - ko'k uzuq chiziq
+        }
+        if (tripLatLngs.length > 0) {
+            L.polyline(tripLatLngs, { color: 'green', weight: 5 }).addTo(routeMap); // Trip - yashil qalin
+            routeMap.fitBounds(L.polyline(tripLatLngs).getBounds(), { padding: [50, 50] });
+        } else if (pickupLatLngs.length > 0) {
+            routeMap.fitBounds(L.polyline(pickupLatLngs).getBounds(), { padding: [50, 50] });
+        }
+
+        // To'xtash joylarini belgilash
+        const addStops = (stops, color) => {
+            stops.forEach(s => {
+                L.marker([s.lat, s.lng], {
+                    icon: L.divIcon({
+                        className: 'stop-icon',
+                        html: `<div style="background:${color}; color:white; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; border:2px solid white; box-shadow:0 2px 5px rgba(0,0,0,0.3);">P</div>`
+                    })
+                }).addTo(routeMap).bindPopup(`To'xtash: ${s.duration} daqiqa<br>Vaqt: ${s.time}`);
+            });
+        };
+        addStops(data.stats.pickup.stops, 'blue');
+        addStops(data.stats.trip.stops, 'red');
+
+        // Statistikani chiqarish
+        document.getElementById('route-stats').innerHTML = `
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+                <div style="background:white; padding:10px; border-radius:10px; border-left:4px solid blue;">
+                    <div style="font-size:12px; color:#666;">Mijozgacha</div>
+                    <div style="font-weight:bold;">${data.stats.pickup.dist} km</div>
+                    <div style="font-size:11px;">To'xtashlar: ${data.stats.pickup.stops.length} ta</div>
+                </div>
+                <div style="background:white; padding:10px; border-radius:10px; border-left:4px solid green;">
+                    <div style="font-size:12px; color:#666;">Mijoz bilan</div>
+                    <div style="font-weight:bold;">${data.stats.trip.dist} km</div>
+                    <div style="font-size:11px;">To'xtashlar: ${data.stats.trip.stops.length} ta</div>
+                </div>
+            </div>
+            <div style="font-size:12px; color:#888; text-align:center;">
+                <span style="color:blue">---</span> Mijozgacha &nbsp;&nbsp; <span style="color:green">━━━</span> Sayohat
+            </div>
+        `;
+        setTimeout(() => routeMap.invalidateSize(), 300);
+
+    } catch (e) { console.error(e); alert("Xatolik yuz berdi"); }
+};
