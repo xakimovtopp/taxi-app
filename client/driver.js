@@ -41,6 +41,7 @@ let availableOrders = []; // Ro'yxatdagi zakazlar
 let currentSpeed = 0; // [YANGI]
 let deviceHeading = 0; // [YANGI]
 let wakeLock = null; // [YANGI] Ekran o'chmasligi uchun (Background mode)
+let isChatOpen = false; // [YANGI] Chat holati
 
 // --- 1. LOGIN ---
 window.loginDriver = async function() {
@@ -48,12 +49,26 @@ window.loginDriver = async function() {
     if(!phone) return alert("Raqamni kiriting!");
     
     try {
-        const res = await fetch(`${API_BASE}/api/driver/login`, {
+        // 1. Login so'rovi
+        let res = await fetch(`${API_BASE}/api/driver/login`, {
             method: 'POST',
             headers: {'Content-Type':'application/json'},
             body: JSON.stringify({ phone })
         });
-        const data = await res.json();
+        let data = await res.json();
+        
+        // 2. Kod so'rash
+        if (data.requireOtp) {
+            const code = prompt(`SMS kodni kiriting (${phone}):`);
+            if (!code) return;
+
+            res = await fetch(`${API_BASE}/api/driver/login`, {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ phone, code })
+            });
+            data = await res.json();
+        }
         
         if(data.success) {
             currentPhone = phone;
@@ -68,6 +83,7 @@ window.loginDriver = async function() {
             if(data.activeOrder) {
                 restoreActiveOrder(data.activeOrder);
             }
+            initChatInterface(); // [YANGI] Chat oynasini yaratish
             requestWakeLock(); // [YANGI] Ekranni yoqiq saqlash
         } else {
             alert(data.error || "Bunday haydovchi topilmadi!");
@@ -96,6 +112,7 @@ async function checkDriverStatus() {
         if(data.success) {
             loadProfile();
             if(data.activeOrder) restoreActiveOrder(data.activeOrder);
+            initChatInterface(); // [YANGI]
             requestWakeLock(); // [YANGI]
         }
     } catch(e) { console.error(e); }
@@ -421,6 +438,7 @@ socket.on('order_accepted_success', (order) => {
     currentOrder = order;
     activeOrderId = order.id;
     tripStatus = 'yetib_keldi';
+    injectChatButton(); // [YANGI] Chat tugmasini qo'shish
     
     const panel = document.getElementById('panel-active');
     if(panel) {
@@ -442,6 +460,7 @@ socket.on('order_accepted_success', (order) => {
 function restoreActiveOrder(order) {
     currentOrder = order;
     activeOrderId = order.id;
+    injectChatButton(); // [YANGI]
     
     // Qayta kirganda serverdagi xonaga (room) ulanish
     if (socket) {
@@ -895,6 +914,115 @@ if(localStorage.getItem('d_phone')) {
     const loginScreen = document.getElementById('screen-login');
     if(loginScreen) loginScreen.style.display = 'none';
 }
+
+// ==============================
+// [YANGI] CHAT TIZIMI (HAYDOVCHI UCHUN)
+// ==============================
+
+function initChatInterface() {
+    if (document.getElementById('driver-chat-modal')) return;
+
+    const chatHtml = `
+    <div id="driver-chat-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:3000; justify-content:center; align-items:center;">
+        <div style="width:90%; height:70%; background:white; border-radius:15px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 5px 20px rgba(0,0,0,0.3);">
+            <div style="padding:15px; background:#FFD600; font-weight:bold; display:flex; justify-content:space-between; align-items:center;">
+                <span>Mijoz bilan chat</span>
+                <i class="fas fa-times" style="font-size:20px; cursor:pointer;" onclick="toggleDriverChat()"></i>
+            </div>
+            <div id="driver-chat-messages" style="flex:1; padding:15px; overflow-y:auto; background:#f3f4f6; display:flex; flex-direction:column; gap:10px;"></div>
+            <div style="padding:10px; background:white; border-top:1px solid #eee; display:flex; gap:10px;">
+                <input type="text" id="driver-chat-input" placeholder="Xabar yozing..." style="flex:1; padding:12px; border:1px solid #ddd; border-radius:20px; outline:none;">
+                <button onclick="sendDriverMessage()" style="width:45px; height:45px; background:#FFD600; border:none; border-radius:50%; cursor:pointer;"><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', chatHtml);
+}
+
+function injectChatButton() {
+    // Agar tugma allaqachon bo'lsa, qayta qo'shmaymiz
+    if (document.getElementById('btn-open-chat')) return;
+
+    const panel = document.getElementById('panel-active');
+    if (panel) {
+        // Tugmani panel ichiga joylaymiz (masalan, manzil tagiga)
+        const btn = document.createElement('button');
+        btn.id = 'btn-open-chat';
+        btn.innerHTML = '<i class="fas fa-comment-dots"></i> Chat';
+        btn.style.cssText = "margin-top:10px; width:100%; padding:12px; background:#3b82f6; color:white; border:none; border-radius:10px; font-weight:bold; font-size:16px; cursor:pointer;";
+        btn.onclick = toggleDriverChat;
+        
+        // [YANGI] Tashqi Navigator tugmasi
+        const navBtn = document.createElement('button');
+        navBtn.innerHTML = '<i class="fas fa-location-arrow"></i> Google Maps';
+        navBtn.style.cssText = "margin-top:10px; width:100%; padding:12px; background:#fff; color:#333; border:1px solid #ddd; border-radius:10px; font-weight:bold; font-size:16px; cursor:pointer; margin-bottom: 10px;";
+        navBtn.onclick = function() {
+            if(currentOrder && currentOrder.toLat && currentOrder.toLng) {
+                window.open(`https://www.google.com/maps/dir/?api=1&destination=${currentOrder.toLat},${currentOrder.toLng}`, '_blank');
+            } else {
+                alert("Manzil koordinatalari yo'q");
+            }
+        };
+
+        // Panelning tugmalar qismidan oldin qo'shamiz
+        const slider = panel.querySelector('#slider-container');
+        if(slider) {
+            panel.insertBefore(navBtn, slider);
+            panel.insertBefore(btn, slider);
+        } else {
+            panel.appendChild(navBtn);
+            panel.appendChild(btn);
+        }
+    }
+}
+
+window.toggleDriverChat = function() {
+    const modal = document.getElementById('driver-chat-modal');
+    if (!modal) return;
+    
+    isChatOpen = !isChatOpen;
+    modal.style.display = isChatOpen ? 'flex' : 'none';
+    
+    // Chat ochilganda yangi xabar indikatorini o'chirish (agar bo'lsa)
+    const btn = document.getElementById('btn-open-chat');
+    if(btn) btn.style.background = '#3b82f6';
+};
+
+window.sendDriverMessage = function() {
+    const input = document.getElementById('driver-chat-input');
+    const text = input.value.trim();
+    if (!text || !activeOrderId) return;
+
+    // Ekranga chiqarish
+    const msgBox = document.getElementById('driver-chat-messages');
+    msgBox.innerHTML += `<div style="align-self:flex-end; background:#FFD600; padding:8px 12px; border-radius:12px 12px 0 12px; max-width:80%; margin-bottom:5px;">${text}</div>`;
+    msgBox.scrollTop = msgBox.scrollHeight;
+
+    // Serverga yuborish
+    socket.emit('send_message', { orderId: activeOrderId, text: text, sender: 'driver' });
+    input.value = '';
+};
+
+// Xabar kelganda
+socket.on('receive_message', (data) => {
+    // Agar xabar haydovchidan bo'lsa (o'zimizdan), qayta chiqarmaymiz
+    if (data.sender === 'driver') return;
+
+    const msgBox = document.getElementById('driver-chat-messages');
+    if (msgBox) {
+        msgBox.innerHTML += `<div style="align-self:flex-start; background:white; border:1px solid #ddd; padding:8px 12px; border-radius:12px 12px 12px 0; max-width:80%; margin-bottom:5px;">${data.text}</div>`;
+        msgBox.scrollTop = msgBox.scrollHeight;
+    }
+
+    // Agar chat yopiq bo'lsa, tugma rangini o'zgartiramiz va ovoz chiqaramiz
+    if (!isChatOpen) {
+        const btn = document.getElementById('btn-open-chat');
+        if(btn) btn.style.background = '#ef4444'; // Qizil rang
+        playNotificationSound();
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    }
+});
+
 
 // --- INIT (ENG OXIRIDA) ---
 if(currentPhone) {
