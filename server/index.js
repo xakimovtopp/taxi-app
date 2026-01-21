@@ -7,6 +7,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const fs = require('fs'); // [YANGI] Fayllar bilan ishlash uchun
 const smpp = require('smpp'); // [YANGI] SMS yuborish uchun
+const rateLimit = require('express-rate-limit'); // [YANGI] Spamdan himoya
 
 const app = express();
 const server = http.createServer(app);
@@ -26,6 +27,13 @@ app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // Client papkasini ulash
 app.use(express.static(path.join(__dirname, '../client')));
+
+// [YANGI] Login uchun cheklov (15 daqiqada 5 marta)
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, 
+    max: 5, 
+    message: { error: "Juda ko'p urinish! 15 daqiqadan keyin urinib ko'ring." }
+});
 
 // --- ☁️ MONGODB ULANISH ---
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://xakimov:Azizbek8889@cluster0.66sckhd.mongodb.net/taxi-pro?retryWrites=true&w=majority&appName=Cluster0";
@@ -190,7 +198,11 @@ const BuyurtmaSchema = new mongoose.Schema({
     haydovchi_id: String,
     haydovchi_phone: String,
     arrived_time: { type: Date }, // [YANGI] Kutish vaqti uchun
-    wait_cost: { type: Number, default: 0 } // [YANGI] Kutish narxi
+    wait_cost: { type: Number, default: 0 }, // [YANGI] Kutish narxi
+    scheduled_time: { type: Date }, // [YANGI] Oldindan buyurtma vaqti
+    accepted_time: { type: Date }, // [YANGI] Qabul qilingan vaqt
+    started_time: { type: Date },  // [YANGI] Boshlangan vaqt
+    finished_time: { type: Date }  // [YANGI] Tugagan vaqt
 });
 const Buyurtma = mongoose.model('Buyurtma', BuyurtmaSchema);
 
@@ -339,7 +351,7 @@ const CalculationGroup = mongoose.model('CalculationGroup', CalculationGroupSche
 const DriverHistorySchema = new mongoose.Schema({
     driver_phone: String,
     date: String, // YYYY-MM-DD
-    locations: [{ lat: Number, lng: Number, time: String }]
+    locations: [{ lat: Number, lng: Number, time: String, timestamp: Date, speed: Number }] // [YANGI] Timestamp va Speed
 });
 const DriverHistory = mongoose.model('DriverHistory', DriverHistorySchema);
 
@@ -388,6 +400,7 @@ io.on('connection', (socket) => {
                 order.haydovchi = driver ? (driver.firstname + " " + driver.lastname) : "Haydovchi";
                 order.haydovchi_phone = data.phone;
                 order.haydovchi_id = driver ? driver._id : null;
+                order.accepted_time = new Date(); // [YANGI] Vaqtni saqlash
                 
                 await order.save();
 
@@ -432,6 +445,9 @@ io.on('connection', (socket) => {
                 if (data.status === 'arrived') {
                     order.arrived_time = new Date(); // [YANGI] Yetib kelgan vaqtni saqlash
                 }
+                if (data.status === 'started') {
+                    order.started_time = new Date(); // [YANGI]
+                }
                 
                 // [YANGI] Agar status 'started' bo'lsa, kutish pulini hisoblaymiz
                 if (data.status === 'started' && order.arrived_time) {
@@ -467,6 +483,7 @@ io.on('connection', (socket) => {
 
                 // [YANGI] Buyurtma tugaganda Moliya hisob-kitobi
                 if (data.status === 'finished') {
+                    order.finished_time = new Date(); // [YANGI]
                     const driver = await Haydovchi.findOne({ telefon: order.haydovchi_phone });
                     if (driver) {
                         const price = parseInt(order.narx.replace(/\D/g, '')) || 0;
@@ -530,7 +547,7 @@ io.on('connection', (socket) => {
                 const time = new Date().toLocaleTimeString('uz-UZ', {hour12: false});
                 await DriverHistory.updateOne(
                     { driver_phone: coords.id, date: today },
-                    { $push: { locations: { lat: coords.lat, lng: coords.lng, time: time } } },
+                    { $push: { locations: { lat: coords.lat, lng: coords.lng, time: time, timestamp: new Date(), speed: coords.speed || 0 } } }, // [YANGI]
                     { upsert: true }
                 );
             } catch(e) { console.error("History save error:", e); }
@@ -832,6 +849,14 @@ app.post('/api/orders', async (req, res) => {
         status: 'yangi', 
         vaqt: new Date().toLocaleTimeString("uz-UZ", {hour: '2-digit', minute:'2-digit'}) 
     });
+
+    // [YANGI] Oldindan buyurtma tekshiruvi
+    if (req.body.scheduledTime) {
+        yangi.status = 'scheduled';
+        yangi.scheduled_time = new Date(req.body.scheduledTime);
+        yangi.vaqt = new Date(req.body.scheduledTime).toLocaleString("uz-UZ", {hour: '2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'});
+    }
+
     await yangi.save();
     
     // Smart Dispatch Logic
@@ -884,7 +909,7 @@ app.post('/api/drivers', async (req, res) => {
         res.json({ success: true }); 
     } catch(e) { res.status(500).json({ error: "Xatolik" }); }
 });
-app.post('/api/driver/login', async (req, res) => {
+app.post('/api/driver/login', loginLimiter, async (req, res) => { // [YANGI] Limiter qo'shildi
     const { phone, code } = req.body;
     const driver = await Haydovchi.findOne({ telefon: phone });
     
@@ -1071,7 +1096,9 @@ app.get('/api/admin/logs', async (req, res) => res.json(await Log.find().sort({_
 // [YANGI] SMS Loglarini olish API
 app.get('/api/admin/sms-logs', async (req, res) => {
     try {
-        const logs = await SmsLog.find().sort({ date: -1 }).limit(200);
+        const { phone } = req.query;
+        const filter = phone ? { phone: { $regex: phone, $options: 'i' } } : {};
+        const logs = await SmsLog.find(filter).sort({ date: -1 }).limit(200);
         res.json(logs);
     } catch(e) { res.status(500).json({ error: "Xatolik" }); }
 });
@@ -1153,7 +1180,7 @@ app.get('/api/client/orders', async (req, res) => {
 });
 
 // [YANGI] Mijoz Login (server.js dan ko'chirildi)
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => { // [YANGI] Limiter qo'shildi
     const { phone, code } = req.body;
     if (!phone) return res.status(400).json({ message: "Raqam yo'q" });
 
@@ -1244,6 +1271,67 @@ app.get('/api/admin/driver/history', async (req, res) => {
         const history = await DriverHistory.findOne({ driver_phone: phone, date: date });
         res.json(history ? history.locations : []);
     } catch(e) { res.status(500).json([]); }
+});
+
+// [YANGI] Buyurtma marshrutini tahlil qilish API
+app.get('/api/driver/order-route/:id', async (req, res) => {
+    try {
+        const order = await Buyurtma.findOne({ id: req.params.id });
+        if (!order) return res.status(404).json({ error: "Buyurtma topilmadi" });
+
+        // Agar vaqtlar saqlanmagan bo'lsa (eski buyurtmalar uchun)
+        if (!order.accepted_time || !order.finished_time) {
+             return res.json({ error: "Bu buyurtma uchun to'liq marshrut tarixi mavjud emas" });
+        }
+
+        const dateStr = new Date(order.accepted_time).toISOString().split('T')[0];
+        const history = await DriverHistory.findOne({ driver_phone: order.haydovchi_phone, date: dateStr });
+        
+        if (!history || !history.locations) return res.json({ pickup: [], trip: [], stats: {} });
+
+        const locs = history.locations;
+        const startTripTime = order.started_time || order.arrived_time || order.finished_time;
+        
+        // 1. Mijozgacha (Pickup)
+        const pickupPoints = locs.filter(l => new Date(l.timestamp) >= new Date(order.accepted_time) && new Date(l.timestamp) <= new Date(startTripTime));
+        // 2. Mijoz bilan (Trip)
+        const tripPoints = locs.filter(l => new Date(l.timestamp) >= new Date(startTripTime) && new Date(l.timestamp) <= new Date(order.finished_time));
+
+        // Tahlil funksiyasi (Masofa va To'xtashlar)
+        function analyzePath(points) {
+            let dist = 0;
+            let stops = [];
+            if (points.length < 2) return { dist, stops };
+
+            let stopStartTime = null;
+            let stopStartLoc = null;
+
+            for (let i = 1; i < points.length; i++) {
+                const d = getDistKm(points[i-1].lat, points[i-1].lng, points[i].lat, points[i].lng);
+                dist += d;
+
+                // To'xtashni aniqlash (Agar 20 metrdan kam yursa va vaqt o'tsa)
+                if (d < 0.02) { // 20 metr
+                    if (!stopStartTime) { stopStartTime = points[i-1].timestamp; stopStartLoc = points[i-1]; }
+                } else {
+                    if (stopStartTime) {
+                        const duration = (new Date(points[i-1].timestamp) - new Date(stopStartTime)) / 1000 / 60; // minut
+                        if (duration >= 2) { // 2 daqiqadan ko'p tursa
+                            stops.push({ lat: stopStartLoc.lat, lng: stopStartLoc.lng, duration: Math.round(duration), time: points[i-1].time });
+                        }
+                        stopStartTime = null;
+                    }
+                }
+            }
+            return { dist: dist.toFixed(2), stops };
+        }
+
+        const pickupStats = analyzePath(pickupPoints);
+        const tripStats = analyzePath(tripPoints);
+
+        res.json({ pickup: pickupPoints, trip: tripPoints, stats: { pickup: pickupStats, trip: tripStats } });
+
+    } catch (e) { console.error(e); res.status(500).json({ error: "Xatolik" }); }
 });
 
 // ==========================================
@@ -1354,6 +1442,22 @@ function startBackgroundTasks() {
             }
         } catch (e) { console.error("Auto Surge Error:", e); }
     }, 5000);
+
+    // [YANGI] 3. OLDINDAN BUYURTMALARNI TEKSHIRISH (Har 1 daqiqada)
+    setInterval(async () => {
+        try {
+            const now = new Date();
+            const upcoming = new Date(now.getTime() + 20 * 60000); // 20 daqiqa oldin chiqarish
+            
+            const orders = await Buyurtma.find({ status: 'scheduled', scheduled_time: { $lte: upcoming } });
+            for(let order of orders) {
+                order.status = 'yangi';
+                await order.save();
+                io.emit('yangi_buyurtma', order); // Haydovchilarga yuborish
+                console.log(`⏰ Rejali buyurtma aktivlashdi: #${order.id}`);
+            }
+        } catch (e) { console.error("Scheduled Order Error:", e); }
+    }, 60000);
 
     // 2. Avtomatik Backup (Har 1 soatda)
     setInterval(async () => {
