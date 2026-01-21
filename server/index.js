@@ -31,7 +31,7 @@ app.use(express.static(path.join(__dirname, '../client')));
 // [YANGI] Login uchun cheklov (15 daqiqada 5 marta)
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, 
-    max: 5, 
+    max: 100, 
     message: { error: "Juda ko'p urinish! 15 daqiqadan keyin urinib ko'ring." }
 });
 
