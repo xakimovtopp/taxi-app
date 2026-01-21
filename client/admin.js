@@ -2925,7 +2925,20 @@ async function openPartnerAddDriverModal() {
 async function loadSmsLogs() {
     ensurePageSection('sms_logs', 'SMS Tarixi', ['Vaqt', 'Telefon', 'Xabar', 'Status']);
     
-    const res = await fetch(`${API_URL}/admin/sms-logs`);
+    // [YANGI] Qidiruv inputini qo'shish
+    const header = document.querySelector('#sms_logs .header');
+    if(header && !document.getElementById('sms-search-input')) {
+        const div = document.createElement('div');
+        div.style.cssText = "display:flex; gap:10px; align-items:center;";
+        div.innerHTML = `
+            <input type="text" id="sms-search-input" placeholder="Tel raqam..." style="padding:8px; border:1px solid #ddd; border-radius:5px; outline:none;">
+            <button class="btn btn-primary" onclick="loadSmsLogs()">Izlash</button>
+        `;
+        header.appendChild(div);
+    }
+
+    const searchVal = document.getElementById('sms-search-input') ? document.getElementById('sms-search-input').value : '';
+    const res = await fetch(`${API_URL}/admin/sms-logs${searchVal ? '?phone='+encodeURIComponent(searchVal) : ''}`);
     const logs = await res.json();
     
     const tbody = document.getElementById('sms_logs-table');
