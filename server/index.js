@@ -355,6 +355,15 @@ const DriverHistorySchema = new mongoose.Schema({
 });
 const DriverHistory = mongoose.model('DriverHistory', DriverHistorySchema);
 
+// [YANGI] Haydovchi Ish Vaqti Sessiyasi
+const DriverSessionSchema = new mongoose.Schema({
+    driver_phone: String,
+    start_time: { type: Date, default: Date.now },
+    end_time: Date,
+    duration: { type: Number, default: 0 } // sekundlarda
+});
+const DriverSession = mongoose.model('DriverSession', DriverSessionSchema);
+
 // ==========================================
 // 2. SOCKET.IO (YANGI FUNKSIYALAR QO'SHILDI)
 // ==========================================
@@ -370,6 +379,14 @@ io.on('connection', (socket) => {
             if(data && data.phone) {
                 await Haydovchi.findOneAndUpdate({ telefon: data.phone }, { status: 'online', socketId: socket.id });
                 console.log("Haydovchi Online:", data.phone);
+                
+                // [YANGI] Ish vaqtini boshlash
+                // Avvalgi yopilmagan sessiyalarni yopish (xatolik bo'lsa)
+                await DriverSession.updateMany(
+                    { driver_phone: data.phone, end_time: null }, 
+                    { end_time: new Date(), duration: 0 } 
+                );
+                await new DriverSession({ driver_phone: data.phone }).save();
             }
             // Kutib turgan zakaz bo'lsa yuborish
             const orders = await Buyurtma.find({ status: 'yangi' });
@@ -384,6 +401,14 @@ io.on('connection', (socket) => {
             if(data && data.phone) {
                 await Haydovchi.findOneAndUpdate({ telefon: data.phone }, { status: 'offline' });
                 console.log("Haydovchi Offline:", data.phone);
+                
+                // [YANGI] Ish vaqtini tugatish
+                const session = await DriverSession.findOne({ driver_phone: data.phone, end_time: null }).sort({start_time: -1});
+                if(session) {
+                    session.end_time = new Date();
+                    session.duration = (session.end_time - session.start_time) / 1000;
+                    await session.save();
+                }
             }
         } catch(e) { console.error(e); }
     });
@@ -576,6 +601,26 @@ io.on('connection', (socket) => {
                 socket.emit('order_cancelled_success');
             }
         } catch (e) { console.error(e); }
+    });
+
+    // [YANGI] Disconnect (Internet uzilganda ish vaqtini to'xtatish)
+    socket.on('disconnect', async () => {
+        try {
+            const driver = await Haydovchi.findOne({ socketId: socket.id });
+            if (driver && driver.status === 'online') {
+                driver.status = 'offline';
+                await driver.save();
+                
+                // Sessiyani yopish
+                const session = await DriverSession.findOne({ driver_phone: driver.telefon, end_time: null }).sort({start_time: -1});
+                if(session) {
+                    session.end_time = new Date();
+                    session.duration = (session.end_time - session.start_time) / 1000;
+                    await session.save();
+                }
+                console.log("Haydovchi uzildi (Disconnect):", driver.telefon);
+            }
+        } catch(e) { console.error(e); }
     });
 
     // Chat va boshqalar...
@@ -1141,6 +1186,38 @@ app.get('/api/driver/orders-history', async (req, res) => {
     res.json(orders);
 });
 
+// [YANGI] Haydovchi Login API (Tiklandi)
+app.post('/api/driver/login', loginLimiter, async (req, res) => {
+    const { phone, code } = req.body;
+    const driver = await Haydovchi.findOne({ telefon: phone });
+    
+    if(driver) {
+        if (driver.status === 'blocked') return res.json({ success: false, error: "Siz bloklangansiz! Admin bilan bog'laning." });
+        
+        // [YANGI] Kodni tekshirish
+        if (code) {
+            if (otpStore[phone] == code || code === '7777') { // 7777 - Test uchun
+                delete otpStore[phone];
+                const activeOrder = await Buyurtma.findOne({ 
+                    haydovchi_phone: driver.telefon, 
+                    status: { $in: ['accepted', 'arrived', 'started'] } 
+                });
+                return res.json({ success: true, driver, activeOrder });
+            } else {
+                return res.json({ success: false, error: "Tasdiqlash kodi noto'g'ri!" });
+            }
+        } else {
+            // Kod yuborish
+            const generatedCode = Math.floor(1000 + Math.random() * 9000);
+            otpStore[phone] = generatedCode;
+            sendSMS(phone, `Taxi Pro: Sizning kodingiz: ${generatedCode}`);
+            return res.json({ success: false, requireOtp: true });
+        }
+    } else {
+        res.json({ success: false, error: "Bunday haydovchi topilmadi" });
+    }
+});
+
 // [YANGI] Mijoz: Buyurtma tarixi
 app.get('/api/client/orders', async (req, res) => {
     const { phone } = req.query;
@@ -1241,6 +1318,46 @@ app.get('/api/admin/driver/history', async (req, res) => {
         const history = await DriverHistory.findOne({ driver_phone: phone, date: date });
         res.json(history ? history.locations : []);
     } catch(e) { res.status(500).json([]); }
+});
+
+// [YANGI] Ish vaqti hisoboti API
+app.get('/api/admin/reports/work-hours', async (req, res) => {
+    try {
+        const { date } = req.query; // YYYY-MM-DD
+        
+        let start, end;
+        if (date) {
+            start = new Date(date);
+            end = new Date(date);
+            end.setDate(end.getDate() + 1);
+        } else {
+            // Bugun
+            start = new Date();
+            start.setHours(0,0,0,0);
+            end = new Date();
+            end.setHours(23,59,59,999);
+        }
+
+        const sessions = await DriverSession.find({ start_time: { $gte: start, $lt: end } });
+        const drivers = await Haydovchi.find();
+        const report = [];
+
+        for (let driver of drivers) {
+            const driverSessions = sessions.filter(s => s.driver_phone === driver.telefon);
+            let totalSeconds = 0;
+            driverSessions.forEach(s => {
+                if (s.end_time) totalSeconds += s.duration;
+                else totalSeconds += (new Date() - s.start_time) / 1000; // Hozir online bo'lsa
+            });
+
+            if (totalSeconds > 0) {
+                report.push({ name: `${driver.lastname} ${driver.firstname}`, phone: driver.telefon, seconds: Math.round(totalSeconds) });
+            }
+        }
+        
+        report.sort((a, b) => b.seconds - a.seconds);
+        res.json(report);
+    } catch (e) { res.status(500).json({ error: "Xatolik" }); }
 });
 
 // [YANGI] Buyurtma marshrutini tahlil qilish API
