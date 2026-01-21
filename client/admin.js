@@ -14,6 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
     injectManagerMenuItem(); // [YANGI] Menyuga menejer bo'limini qo'shish
     injectCalculationGroupMenuItem(); // [YANGI] Menyuga hisob-kitob guruhlari
     injectPartnerMenuItem(); // [YANGI] Menyuga hamkorlar bo'limini qo'shish
+    injectSmsLogsMenuItem(); // [YANGI] SMS Tarixi menyusi
 });
 
 // LOGIN TEKSHIRISH
@@ -152,6 +153,7 @@ function openPage(pageId) {
     if (pageId === 'roles') loadRoles(); // [YANGI]
     if (pageId === 'finance') loadFinance(); // [YANGI]
     if (pageId === 'logs') loadLogs(); // [YANGI]
+    if (pageId === 'sms_logs') loadSmsLogs(); // [YANGI]
     if (pageId === 'backups') loadBackups(); // [YANGI]
     if (pageId === 'promocodes') loadPromocodes(); // [YANGI]
     if (pageId === 'partner_dashboard') loadPartnerDashboard(); // [YANGI]
@@ -2917,4 +2919,50 @@ async function openPartnerAddDriverModal() {
         partnerSel.value = currentUser.id;
         partnerSel.disabled = true; // O'zgartira olmasligi uchun
     }
+}
+
+// [YANGI] SMS Tarixi (Logs)
+async function loadSmsLogs() {
+    ensurePageSection('sms_logs', 'SMS Tarixi', ['Vaqt', 'Telefon', 'Xabar', 'Status']);
+    
+    const res = await fetch(`${API_URL}/admin/sms-logs`);
+    const logs = await res.json();
+    
+    const tbody = document.getElementById('sms_logs-table');
+    tbody.innerHTML = '';
+    
+    if(logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center">SMS tarixi bo\'sh</td></tr>';
+        return;
+    }
+
+    logs.forEach(l => {
+        const statusBadge = l.status === 'sent' 
+            ? '<span class="badge bg-new">Yuborildi</span>' 
+            : `<span class="badge" style="background:#fee2e2; color:red">Xato: ${l.error || ''}</span>`;
+            
+        tbody.innerHTML += `
+            <tr>
+                <td>${new Date(l.date).toLocaleString("uz-UZ")}</td>
+                <td>${l.phone}</td>
+                <td>${l.message}</td>
+                <td>${statusBadge}</td>
+            </tr>`;
+    });
+}
+
+function injectSmsLogsMenuItem() {
+    const existing = document.querySelector(".menu-item[onclick*='sms_logs']");
+    if (existing) return;
+    const menu = document.querySelector('.menu');
+    if (!menu) return;
+    const btn = document.createElement('div');
+    btn.className = 'menu-item';
+    btn.setAttribute('onclick', "openPage('sms_logs')");
+    btn.innerHTML = '<i class="fas fa-sms"></i> SMS Tarixi';
+    
+    // Loglar bo'limidan keyin qo'shish
+    const logsBtn = document.querySelector(".menu-item[onclick*='logs']");
+    if (logsBtn && logsBtn.nextSibling) menu.insertBefore(btn, logsBtn.nextSibling);
+    else menu.appendChild(btn);
 }
